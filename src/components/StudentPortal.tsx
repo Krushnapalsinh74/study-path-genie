@@ -1935,21 +1935,15 @@ const StudentPortal = () => {
     return (
       <div className="min-h-screen bg-white p-4">
         <div className="max-w-md mx-auto">
-          <div className="border border-gray-200 rounded-3xl p-6">
-            <div className="text-center mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                Choose Paper Generation Method
-              </h1>
-              <p className="text-gray-600 text-sm mb-4">
-                {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
-              </p>
+          <div className="border border-gray-300 rounded-3xl p-6">
+            <div className="mb-6">
               <Button
                 onClick={() => setCurrentStep("subjects")}
                 variant="ghost"
                 className="text-sm"
               >
                 <ChevronLeft className="w-4 h-4 mr-2" />
-                Change Subject
+                Back
               </Button>
             </div>
 
@@ -2028,6 +2022,50 @@ const StudentPortal = () => {
                       <p className="text-sm text-gray-600">Create custom question paper</p>
                     </div>
                     <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Study Material Section */}
+              <div className="mt-8 pt-6 border-t border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Study Material</h3>
+                <div className="space-y-4">
+                  <div
+                    onClick={() => {
+                      // Add study material functionality here
+                      console.log("Study Notes clicked");
+                    }}
+                    className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-indigo-300 hover:bg-indigo-50 transition-all duration-200 group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center group-hover:bg-indigo-200 transition-colors">
+                        <BookOpen className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-semibold text-gray-900">Study Notes</h3>
+                        <p className="text-sm text-gray-600">Access comprehensive study notes</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => {
+                      // Add practice tests functionality here
+                      console.log("Practice Tests clicked");
+                    }}
+                    className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-teal-300 hover:bg-teal-50 transition-all duration-200 group"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center group-hover:bg-teal-200 transition-colors">
+                        <GraduationCap className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-semibold text-gray-900">Practice Tests</h3>
+                        <p className="text-sm text-gray-600">Take practice tests and quizzes</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
                   </div>
                 </div>
               </div>

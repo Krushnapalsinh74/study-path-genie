@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft } from "lucide-react";
+import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Menu, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +82,7 @@ const StudentPortal = () => {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const [loadingBoards, setLoadingBoards] = useState(false);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
@@ -151,7 +152,7 @@ const StudentPortal = () => {
 
   // Function to load subjects for selected standard
   const loadSubjectsForStandard = async (standardId: number) => {
-    setLoadingBoards(true);
+    setLoadingSubjects(true);
     
     try {
       const response = await fetch(`${ADMIN_BASE_URL}/api/standards/${standardId}/subjects`);
@@ -189,7 +190,7 @@ const StudentPortal = () => {
       ];
       setSubjects(prev => ({ ...prev, [standardId]: fallbackSubjects }));
     } finally {
-      setLoadingBoards(false);
+      setLoadingSubjects(false);
     }
   };
 
@@ -204,6 +205,76 @@ const StudentPortal = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+  
+  // Menu dropdown state
+  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
+
+  // Close menu dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showMenuDropdown) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.menu-dropdown')) {
+          setShowMenuDropdown(false);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMenuDropdown]);
+
+  // Function to get subject-specific icon
+  const getSubjectIcon = (subjectName: string) => {
+    const name = subjectName.toLowerCase();
+    
+    if (name.includes('math') || name.includes('mathematics')) {
+      return <Calculator className="w-6 h-6 text-black" />;
+    } else if (name.includes('english')) {
+      return <Languages className="w-6 h-6 text-black" />;
+    } else if (name.includes('gujarati') || name.includes('hindi') || name.includes('language')) {
+      return <BookOpen className="w-6 h-6 text-black" />;
+    } else if (name.includes('biology') || name.includes('science - biology')) {
+      return <Brain className="w-6 h-6 text-black" />;
+    } else if (name.includes('chemistry') || name.includes('science - chemistry')) {
+      return <Beaker className="w-6 h-6 text-black" />;
+    } else if (name.includes('physics') || name.includes('science - physics')) {
+      return <Atom className="w-6 h-6 text-black" />;
+    } else if (name.includes('science')) {
+      return <Microscope className="w-6 h-6 text-black" />;
+    } else if (name.includes('social') || name.includes('history') || name.includes('geography')) {
+      return <Globe className="w-6 h-6 text-black" />;
+    } else {
+      return <BookOpen className="w-6 h-6 text-black" />;
+    }
+  };
+
+  // Function to get subject-specific background color
+  const getSubjectColor = (subjectName: string) => {
+    const name = subjectName.toLowerCase();
+    
+    if (name.includes('math') || name.includes('mathematics')) {
+      return 'bg-gradient-to-br from-blue-500 to-blue-600';
+    } else if (name.includes('english')) {
+      return 'bg-gradient-to-br from-purple-500 to-purple-600';
+    } else if (name.includes('gujarati') || name.includes('hindi') || name.includes('language')) {
+      return 'bg-gradient-to-br from-green-500 to-green-600';
+    } else if (name.includes('biology') || name.includes('science - biology')) {
+      return 'bg-gradient-to-br from-pink-500 to-pink-600';
+    } else if (name.includes('chemistry') || name.includes('science - chemistry')) {
+      return 'bg-gradient-to-br from-orange-500 to-orange-600';
+    } else if (name.includes('physics') || name.includes('science - physics')) {
+      return 'bg-gradient-to-br from-indigo-500 to-indigo-600';
+    } else if (name.includes('science')) {
+      return 'bg-gradient-to-br from-teal-500 to-teal-600';
+    } else if (name.includes('social') || name.includes('history') || name.includes('geography')) {
+      return 'bg-gradient-to-br from-amber-500 to-amber-600';
+    } else {
+      return 'bg-gradient-to-br from-gray-500 to-gray-600';
+    }
+  };
 
   // Custom paper builder state
   type CustomQuestionItem = { id: string; text: string; marks: number };
@@ -1561,37 +1632,80 @@ const StudentPortal = () => {
   if (currentStep === "subjects") {
     return (
       <div className="min-h-screen bg-white">
-        <div className="max-w-md mx-auto px-4 py-6">
-         
+        <div className="max-w-md mx-auto px-4 py-6 border border-gray-200 rounded-3xl">
+          {/* Header with Menu */}
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-xl font-bold text-gray-900">Select Subject</h1>
+            <div className="relative menu-dropdown">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex items-center gap-2"
+                onClick={() => setShowMenuDropdown(!showMenuDropdown)}
+              >
+                <Menu className="w-4 h-4" />
+                Menu
+              </Button>
+              
+              {showMenuDropdown && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50 menu-dropdown">
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setCurrentStep("created-papers");
+                        setShowMenuDropdown(false);
+                      }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Created Papers
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Dropdown Selectors */}
           <div className="mb-6">
-            <div className="flex gap-3">
+            <div className="space-y-3">
+              {/* Board Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="flex-1 bg-gray-50 border-2 border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
+                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Board</div>
-                    <div className="text-sm font-semibold text-gray-800 truncate">{selectedBoard?.name || "Select Board"}</div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <GraduationCap className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Board</div>
+                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedBoard?.name || "Select Board"}</div>
+                    </div>
                   </div>
-                  <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-sm ml-2">
+                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-blue-100 transition-colors duration-200">
                     <ChevronRight className="w-3 h-3 text-gray-500" />
                   </div>
                 </div>
               </div>
               
+              {/* Standard Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="flex-1 bg-gray-50 border-2 border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
+                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-green-300 hover:bg-green-50 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Standard</div>
-                    <div className="text-sm font-semibold text-gray-800 truncate">{selectedStandard?.name || "Select Standard"}</div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <Users className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Standard</div>
+                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedStandard?.name || "Select Standard"}</div>
+                    </div>
                   </div>
-                  <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-sm ml-2">
+                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-green-100 transition-colors duration-200">
                     <ChevronRight className="w-3 h-3 text-gray-500" />
                   </div>
                 </div>
@@ -1623,14 +1737,14 @@ const StudentPortal = () => {
                 <h3 className="text-lg font-semibold text-gray-600 mb-2">Select Board & Standard</h3>
                 <p className="text-gray-500 text-sm">Please select your board and standard to view subjects</p>
               </div>
-            ) : loadingBoards ? (
+            ) : loadingSubjects ? (
               <div className="text-center py-16">
                 <Loader2 className="w-8 h-8 animate-spin text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-600 text-sm">Loading subjects...</p>
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto">
-                <div className="grid grid-cols-4 gap-6 pb-4">
+                <div className="grid grid-cols-4 gap-2 pb-4">
                   {subjects[selectedStandard.id] ? (
                     subjects[selectedStandard.id]
                       .filter((subject) => {
@@ -1650,10 +1764,10 @@ const StudentPortal = () => {
                           <div
                             key={index}
                             onClick={() => selectSubject(subjectObj)}
-                            className="cursor-pointer flex flex-col items-center gap-3 p-2 hover:opacity-80 transition-opacity duration-200"
+                            className="cursor-pointer flex flex-col items-center gap-1 p-1 hover:opacity-80 transition-opacity duration-200"
                           >
-                            <div className="w-16 h-16 bg-white border-2 border-gray-200 rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-shadow duration-200">
-                              <BookOpen className="w-8 h-8 text-gray-600" />
+                            <div className={`w-12 h-12 ${getSubjectColor(subjectObj.name)} rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-shadow duration-200`}>
+                              {getSubjectIcon(subjectObj.name)}
                             </div>
                             <div className="text-center">
                               <h3 className="text-xs font-medium text-gray-800 leading-tight">
@@ -1807,116 +1921,115 @@ const StudentPortal = () => {
   }
 
   if (currentStep === "created-papers") {
-    return <CreatedPapers onBack={() => setCurrentStep("main-menu")} />;
+    return <CreatedPapers onBack={() => {
+      // If board and standard are selected, go back to subjects
+      if (selectedBoard && selectedStandard) {
+        setCurrentStep("subjects");
+      } else {
+        setCurrentStep("main-menu");
+      }
+    }} />;
   }
 
   if (currentStep === "paper-options") {
     return (
-      <div className="min-h-screen bg-gradient-background p-4">
-        <div className="max-w-6xl mx-auto">
-          <Card className="shadow-card animate-fade-in">
-            <CardHeader className="text-center">
-              <CardTitle className="text-3xl font-bold text-foreground mb-2">
+      <div className="min-h-screen bg-white p-4">
+        <div className="max-w-md mx-auto">
+          <div className="border border-gray-200 rounded-3xl p-6">
+            <div className="text-center mb-6">
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">
                 Choose Paper Generation Method
-              </CardTitle>
-              <CardDescription>
+              </h1>
+              <p className="text-gray-600 text-sm mb-4">
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
-              </CardDescription>
+              </p>
               <Button
                 onClick={() => setCurrentStep("subjects")}
                 variant="ghost"
-                className="mt-2"
+                className="text-sm"
               >
                 <ChevronLeft className="w-4 h-4 mr-2" />
                 Change Subject
               </Button>
-            </CardHeader>
+            </div>
 
-            <CardContent>
+            <div>
               <div className="space-y-4">
-                <Card
+                <div
                   onClick={() => {
                     setPaperMode("random");
                     setCurrentStep("chapter-selection");
                   }}
-                  className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                  className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 group"
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                        <BookOpen className="w-6 h-6" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-semibold">Random Paper</h3>
-                        <p className="text-sm text-muted-foreground">Generate a random question paper</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                      <BookOpen className="w-6 h-6" />
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-semibold text-gray-900">Random Paper</h3>
+                      <p className="text-sm text-gray-600">Generate a random question paper</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
 
-                <Card
+                <div
                   onClick={() => {
                     setPaperMode("difficulty");
                     setCurrentStep("chapter-selection");
                   }}
-                  className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                  className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-green-300 hover:bg-green-50 transition-all duration-200 group"
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                        <Users className="w-6 h-6" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-semibold">By Difficulty</h3>
-                        <p className="text-sm text-muted-foreground">Generate paper by difficulty level</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-green-100 text-green-600 flex items-center justify-center group-hover:bg-green-200 transition-colors">
+                      <Users className="w-6 h-6" />
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-semibold text-gray-900">By Difficulty</h3>
+                      <p className="text-sm text-gray-600">Generate paper by difficulty level</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
 
-                <Card
+                <div
                   onClick={() => {
                     setPaperMode("chapter");
                     setCurrentStep("multi-chapter-selection");
                   }}
-                  className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                  className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-purple-300 hover:bg-purple-50 transition-all duration-200 group"
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                        <GraduationCap className="w-6 h-6" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-semibold">By Chapter</h3>
-                        <p className="text-sm text-muted-foreground">Generate paper by chapter</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center group-hover:bg-purple-200 transition-colors">
+                      <GraduationCap className="w-6 h-6" />
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-semibold text-gray-900">By Chapter</h3>
+                      <p className="text-sm text-gray-600">Generate paper by chapter</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
 
-                <Card
+                <div
                   onClick={() => {
                     setPaperMode("custom");
                     setCurrentStep("custom-builder");
                   }}
-                  className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                  className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-orange-300 hover:bg-orange-50 transition-all duration-200 group"
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                        <Mail className="w-6 h-6" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-semibold">Custom Paper</h3>
-                        <p className="text-sm text-muted-foreground">Create custom question paper</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center group-hover:bg-orange-200 transition-colors">
+                      <Mail className="w-6 h-6" />
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg font-semibold text-gray-900">Custom Paper</h3>
+                      <p className="text-sm text-gray-600">Create custom question paper</p>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
               </div>
 
               {loadingQuestions && (
@@ -1931,8 +2044,8 @@ const StudentPortal = () => {
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       </div>
     );

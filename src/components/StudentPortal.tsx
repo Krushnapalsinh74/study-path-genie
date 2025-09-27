@@ -5,10 +5,14 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee } from "lucide-react";
+import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
+import CreatedPapers from "./CreatedPapers";
+
+// OTP cooldown (in milliseconds)
+const OTP_COOLDOWN_MS = 60_000;
 
 // Razorpay types
 declare global {
@@ -63,7 +67,7 @@ const StudentPortal = () => {
   const [selectedBoard, setSelectedBoard] = useState<Board | null>(null);
   const [selectedStandard, setSelectedStandard] = useState<Standard | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
-  const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState<string | string[] | null>(null);
   const [selectedQuestionType, setSelectedQuestionType] = useState<string | null>(null);
   const [paperMode, setPaperMode] = useState<string | null>(null);
   const [showBoardsPopup, setShowBoardsPopup] = useState(false);
@@ -80,6 +84,9 @@ const StudentPortal = () => {
   const [loadingBoards, setLoadingBoards] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [loadingChapters, setLoadingChapters] = useState(false);
+  const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
+  const [selectedChapterNames, setSelectedChapterNames] = useState<string[]>([]);
+  const [multiChapterLoading, setMultiChapterLoading] = useState(false);
 
   // Editable paper header fields
   const [examTitle, setExamTitle] = useState("Question Paper");
@@ -91,19 +98,123 @@ const StudentPortal = () => {
   const { toast } = useToast();
 
   // Base URLs for services
-  const OTP_BASE_URL = "https://772pmv7x-3000.inc1.devtunnels.ms";
+  const OTP_BASE_URL = "https://08m8v685-3000.inc1.devtunnels.ms";
   const ADMIN_BASE_URL = "https://08m8v685-3002.inc1.devtunnels.ms";
+
+  // Function to save paper to localStorage
+  const savePaperToStorage = (paperData: {
+    title: string;
+    subject: string;
+    board: string;
+    standard: string;
+    type: string;
+    difficulty?: string;
+    chapters?: string[];
+    totalQuestions: number;
+    totalMarks: number;
+    pdfBlob?: Blob;
+    pdfUrl?: string;
+  }) => {
+    try {
+      const savedPapers = JSON.parse(localStorage.getItem('createdPapers') || '[]');
+      const newPaper = {
+        id: Date.now().toString(),
+        ...paperData,
+        createdAt: new Date().toISOString(),
+      };
+      savedPapers.push(newPaper);
+      localStorage.setItem('createdPapers', JSON.stringify(savedPapers));
+      toast({
+        title: "Paper Saved",
+        description: "Your paper has been saved successfully!",
+      });
+    } catch (error) {
+      console.error('Error saving paper:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save paper. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Function to get all subjects from all standards
+  const getAllSubjects = () => {
+    const allSubjects: Subject[] = [];
+    Object.values(subjects).forEach(standardSubjects => {
+      if (Array.isArray(standardSubjects)) {
+        allSubjects.push(...standardSubjects);
+      }
+    });
+    return allSubjects;
+  };
+
+  // Function to load subjects for selected standard
+  const loadSubjectsForStandard = async (standardId: number) => {
+    setLoadingBoards(true);
+    
+    try {
+      const response = await fetch(`${ADMIN_BASE_URL}/api/standards/${standardId}/subjects`);
+      if (response.ok) {
+        const subjectsData = await response.json();
+        setSubjects(prev => ({ ...prev, [standardId]: subjectsData }));
+        console.log(`Loaded subjects for standard ${standardId}:`, subjectsData);
+      } else {
+        // Use fallback subjects if API fails
+        const fallbackSubjects = [
+          { name: "Mathematics", price: 0 },
+          { name: "Science", price: 0 },
+          { name: "English", price: 0 },
+          { name: "Social Studies", price: 0 },
+          { name: "Hindi", price: 0 },
+          { name: "Physics", price: 0 },
+          { name: "Chemistry", price: 0 },
+          { name: "Biology", price: 0 },
+        ];
+        setSubjects(prev => ({ ...prev, [standardId]: fallbackSubjects }));
+        console.log(`Using fallback subjects for standard ${standardId}`);
+      }
+    } catch (error) {
+      console.error(`Error loading subjects for standard ${standardId}:`, error);
+      // Use fallback subjects on error
+      const fallbackSubjects = [
+        { name: "Mathematics", price: 0 },
+        { name: "Science", price: 0 },
+        { name: "English", price: 0 },
+        { name: "Social Studies", price: 0 },
+        { name: "Hindi", price: 0 },
+        { name: "Physics", price: 0 },
+        { name: "Chemistry", price: 0 },
+        { name: "Biology", price: 0 },
+      ];
+      setSubjects(prev => ({ ...prev, [standardId]: fallbackSubjects }));
+    } finally {
+      setLoadingBoards(false);
+    }
+  };
 
   const [subjectQuery, setSubjectQuery] = useState("");
   const [boardQuery, setBoardQuery] = useState("");
   const [standardQuery, setStandardQuery] = useState("");
   const [chapterQuery, setChapterQuery] = useState("");
   const [targetTotalMarks, setTargetTotalMarks] = useState<number>(50);
+  // Chapter-mode now generates PDF with all questions from selected chapters
   
   // Payment related state
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+
+  // Custom paper builder state
+  type CustomQuestionItem = { id: string; text: string; marks: number };
+  type CustomSubsection = { id: string; title: string; questions: CustomQuestionItem[] };
+  type CustomSection = { id: string; title: string; subsections: CustomSubsection[] };
+  const [customSections, setCustomSections] = useState<CustomSection[]>([]);
+  const [pickerSubId, setPickerSubId] = useState<string | null>(null);
+  const [pickerChapter, setPickerChapter] = useState<string>("");
+  const [pickerLoading, setPickerLoading] = useState<boolean>(false);
+  const [pickerQuestions, setPickerQuestions] = useState<Question[]>([]);
+  const [pickerSelected, setPickerSelected] = useState<Set<number>>(new Set());
   
   // Reset payment loading state when modal opens
   useEffect(() => {
@@ -154,53 +265,68 @@ const StudentPortal = () => {
     // Build hidden container
     const totalMarks = selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0);
 
-    // Build sections (by type) and sub-sections (by difficulty)
-    const orderBy = <T extends string>(arr: T[], order: T[]) => {
-      const set = new Set(arr);
-      const inOrder = order.filter(o => set.has(o));
-      const remaining = Array.from(set).filter(x => !order.includes(x)).sort();
-      return [...inOrder, ...remaining];
-    };
-    const allTypes = selectedQuestions.map(q => q.type || '-');
-    const sectionTypes = orderBy(allTypes as string[], ['very_short', 'short_answer', 'long_answer', 'mcq', 'true_false', 'fill_blank', 'descriptive', 'Mixed', '-']);
-    const difficultyOrder = ['easy', 'medium', 'hard', '-'];
-
+    // Build two sections: A = MCQ, B = Others (ascending marks)
     const sectionLabel = (idx: number) => String.fromCharCode('A'.charCodeAt(0) + idx);
-
     const makeSectionHTML = () => {
       let qNumber = 1;
-      return sectionTypes.map((type, sIdx) => {
-        const inSection = selectedQuestions.filter(q => (q.type || '-') === type);
-        if (inSection.length === 0) return '';
-        const subHTML = orderBy(inSection.map(q => q.difficulty || '-') as string[], difficultyOrder as any)
-          .map(diff => {
-            const inSub = inSection.filter(q => (q.difficulty || '-') === diff);
-            if (inSub.length === 0) return '';
-            const items = inSub.map(q => {
-              const qText = q.question || (q as any).text || (q as any).content || '[No question text]';
+      if (customSections.length > 0) {
+        const nonEmptySections = customSections.filter(sec => sec.subsections.some(sub => sub.questions.length > 0));
+        return nonEmptySections.map((sec, sidx) => {
+          const title = `Section ${String.fromCharCode('A'.charCodeAt(0) + sidx)}: ${sec.title || '-'}`;
+          const subs = sec.subsections.filter(sub => sub.questions.length > 0).map(sub => {
+            const items = sub.questions.map(q => {
+              const qText = q.text || '[No question text]';
               const marks = Number.isFinite(q.marks) ? q.marks : '-';
-              const html = `
-                <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">
-                  <div style=\"display:flex; align-items:flex-start; gap:10px;\">
+              return `
+                <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
+                  <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
                     <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
                     <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qText}</div>
                     <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
                   </div>
                 </div>`;
-              return html;
             }).join('');
-            const diffTitle = diff === '-' ? '' : ` (${diff.replace('_', ' ')})`;
             return `
-              <div style=\"margin-top:6px;\">
-                <div style=\"font-weight:600; font-size:12px; color:#333; margin:6px 0;\">${sectionLabel(sIdx)}.${difficultyOrder.indexOf(diff) + 1} ${diffTitle}</div>
+              <div style=\"margin-top:10px;\">\
+                <div style=\"font-weight:600; font-size:13px;\">${sub.title || '-'}</div>
                 ${items}
               </div>`;
           }).join('');
-        const typeTitle = type === '-' ? 'General' : type.replace(/_/g, ' ');
+          return `
+            <div style=\"margin-top:14px;\">\
+              <div style=\"font-weight:700; font-size:14px; border-left:4px solid #222; padding-left:8px;\">${title}</div>
+              ${subs}
+            </div>`;
+        }).join('');
+      }
+
+      const withCt = selectedQuestions.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+      const mcqs = withCt.filter(q => q._ct === 'MCQ');
+      const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+      const rawSections = [
+        { key: 'MCQ' as const, items: mcqs },
+        { key: 'Others' as const, items: others },
+      ];
+      const nonEmpty = rawSections.filter(s => s.items.length > 0);
+      return nonEmpty.map((sec, idx) => {
+        const title = `Section ${String.fromCharCode('A'.charCodeAt(0) + idx)}: ${sec.key}`;
+        const items = sec.items.map(q => {
+          const qText = q.question || (q as any).text || (q as any).content || '[No question text]';
+          const marks = Number.isFinite(q.marks) ? q.marks : '-';
+          const html = `
+            <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
+              <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
+                <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
+                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qText}</div>
+                <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
+              </div>
+            </div>`;
+          return html;
+        }).join('');
         return `
-          <div style=\"margin-top:14px;\">
-            <div style=\"font-weight:700; font-size:14px; border-left:4px solid #222; padding-left:8px;\">Section ${sectionLabel(sIdx)}: ${typeTitle}</div>
-            ${subHTML}
+          <div style=\"margin-top:14px;\">\
+            <div style=\"font-weight:700; font-size:14px; border-left:4px solid #222; padding-left:8px;\">${title}</div>
+            ${items}
           </div>`;
       }).join('');
     };
@@ -248,6 +374,21 @@ const StudentPortal = () => {
     const saveAndCleanup = (pdf: jsPDF) => {
       const fileName = `${selectedSubject?.name || 'Subject'}_${selectedChapter || 'All'}_Question_Paper.pdf`;
       pdf.save(fileName);
+      
+      // Save paper to localStorage
+      const paperData = {
+        title: examTitle || 'Question Paper',
+        subject: selectedSubject?.name || '',
+        board: selectedBoard?.name || 'General',
+        standard: selectedStandard?.name || 'General',
+        type: paperMode || 'Custom',
+        difficulty: selectedQuestionType || undefined,
+        chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
+        totalQuestions: selectedQuestions.length,
+        totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
+      };
+      savePaperToStorage(paperData);
+      
       if (container.parentNode) container.parentNode.removeChild(container);
       toast({ title: 'PDF Downloaded', description: `Question paper saved as ${fileName}` });
     };
@@ -335,14 +476,88 @@ const StudentPortal = () => {
     loadRazorpayScript();
   }, []);
 
+  // Extract readable question text from many potential fields
+  const getQuestionText = (raw: any): string => {
+    if (!raw) return "";
+    const directCandidates = [
+      raw.question,
+      raw.text,
+      raw.content,
+      raw.title,
+      raw.name,
+      raw.body,
+      raw.prompt,
+      raw.statement,
+      raw.description,
+      raw.questionText,
+      raw.question_text,
+      raw.ques,
+      raw.que,
+    ];
+
+    for (const c of directCandidates) {
+      if (typeof c === "string" && c.trim()) {
+        return c.trim();
+      }
+    }
+
+    // Look into a nested question field if present
+    if (raw.question && typeof raw.question === "object") {
+      const nested = getQuestionText(raw.question);
+      if (nested) return nested;
+    }
+
+    // As a last resort, pick the first string-like value in the object
+    for (const val of Object.values(raw)) {
+      if (typeof val === "string" && val.trim()) {
+        return val.trim();
+      }
+    }
+
+    return "";
+  };
+
+  // Normalize questions coming from various API shapes
+  const normalizeQuestion = (raw: any): Question => {
+    const questionText = getQuestionText(raw);
+    const normalized: Question = {
+      id: raw?.id ?? raw?._id ?? Number(`${Date.now()}${Math.floor(Math.random() * 1000)}`),
+      question: questionText,
+      type: raw?.type ?? raw?.question_type ?? raw?.format ?? "-",
+      difficulty: raw?.difficulty ?? raw?.level ?? "-",
+      chapter: raw?.chapter?.name ?? raw?.chapter ?? raw?.chapterName ?? "-",
+      marks: Number(raw?.marks ?? raw?.score ?? raw?.points ?? 0),
+      text: raw?.text,
+      content: raw?.content,
+    };
+    return normalized;
+  };
+
   // Auto-bypass OTP if previously verified on this browser
   useEffect(() => {
     try {
       const savedEmail = localStorage.getItem("spg_logged_in_email");
       if (savedEmail) {
         setEmail(savedEmail);
-        setCurrentStep("boards");
-        toast({ title: "Welcome back", description: "Logged in from previous session." });
+        // Try restore board and standard; if present, skip directly to subjects
+        const boardRaw = localStorage.getItem("spg_selected_board");
+        const standardRaw = localStorage.getItem("spg_selected_standard");
+        if (boardRaw && standardRaw) {
+          try {
+            const board = JSON.parse(boardRaw);
+            const standard = JSON.parse(standardRaw);
+            setSelectedBoard(board);
+            setSelectedStandard(standard);
+            setCurrentStep("subjects");
+            toast({ title: "Welcome back", description: "Restored your board and standard." });
+          } catch {
+            setCurrentStep("main-menu");
+            toast({ title: "Welcome back", description: "Logged in from previous session." });
+          }
+        } else {
+          setCurrentStep("main-menu");
+          toast({ title: "Welcome back", description: "Logged in from previous session." });
+        }
       }
     } catch {
       // ignore storage errors
@@ -584,26 +799,69 @@ const StudentPortal = () => {
       y += split.length * 5 + 6;
     }
 
-    // Questions
-    selectedQuestions.forEach((question, index) => {
-      if (y > 270) {
-        doc.addPage();
-        y = 20;
-        try { doc.setFont('NotoSansGujarati'); } catch {}
-      }
+    const writeSectionPdf = (title: string, items: any[]) => {
+      if (items.length === 0) return;
       doc.setFontSize(12);
-      const qText = question.question || (question as any).text || (question as any).content || "[No question text]";
-      const split = doc.splitTextToSize(`Q${index + 1}. ${qText}`, 170);
-      doc.text(split, 20, y);
-      y += split.length * 6;
+      doc.text(title, 20, y);
+      y += 8;
+      items.forEach((question, idx) => {
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+          try { doc.setFont('NotoSansGujarati'); } catch {}
+        }
+        const qText = question.question || (question as any).text || (question as any).content || "[No question text]";
+        const split = doc.splitTextToSize(`Q${idx + 1}. ${qText}`, 170);
+        doc.text(split, 20, y);
+        y += split.length * 6;
+        doc.setFontSize(9);
+        doc.text(`Marks: ${question.marks ?? '-' } • Difficulty: ${question.difficulty ?? '-' } • Type: ${question.type ?? '-' }`, 20, y);
+        y += 10;
+        doc.setFontSize(12);
+      });
+      y += 6;
+    };
 
-      doc.setFontSize(9);
-      doc.text(`Marks: ${question.marks ?? '-' } • Difficulty: ${question.difficulty ?? '-' } • Type: ${question.type ?? '-' }`, 20, y);
-      y += 10;
-    });
+    if (customSections.length > 0) {
+      const nonEmptySections = customSections.filter(sec => sec.subsections.some(sub => sub.questions.length > 0));
+      nonEmptySections.forEach((sec, sidx) => {
+        const title = `Section ${String.fromCharCode(65 + sidx)}: ${sec.title || '-'}`;
+        const items = sec.subsections.flatMap(sub => sub.questions.map(q => ({
+          question: q.text,
+          marks: q.marks,
+          difficulty: '-',
+          type: sub.title || '-'
+        })));
+        writeSectionPdf(title, items);
+      });
+    } else {
+      // Two sections: A = MCQ, B = Others (ascending marks)
+      const withCtForPdf = selectedQuestions.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+      const sectionA = withCtForPdf.filter(q => q._ct === 'MCQ');
+      const sectionB = withCtForPdf.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+      const pdfSections: { title: string; items: any[] }[] = [];
+      if (sectionA.length > 0) pdfSections.push({ title: 'Section A: MCQ', items: sectionA });
+      if (sectionB.length > 0) pdfSections.push({ title: pdfSections.length === 0 ? 'Section A: Others' : 'Section B: Others', items: sectionB });
+      pdfSections.forEach(s => writeSectionPdf(s.title, s.items));
+    }
 
-    const fileName = `${selectedSubject?.name || 'Subject'}_${selectedChapter || 'All'}_Question_Paper.pdf`;
+    const chapterPart = Array.isArray(selectedChapter) ? selectedChapter.join('-') : (selectedChapter || 'All');
+    const fileName = `${selectedSubject?.name || 'Subject'}_${chapterPart}_Question_Paper.pdf`;
     doc.save(fileName);
+
+    // Save paper to localStorage
+    const paperData = {
+      title: examTitle || 'Question Paper',
+      subject: selectedSubject?.name || '',
+      board: selectedBoard?.name || 'General',
+      standard: selectedStandard?.name || 'General',
+      type: paperMode || 'Custom',
+      difficulty: selectedQuestionType || undefined,
+      chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
+      totalQuestions: selectedQuestions.length,
+      totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
+    };
+    savePaperToStorage(paperData);
 
     toast({
       title: "PDF Downloaded",
@@ -611,21 +869,17 @@ const StudentPortal = () => {
     });
   };
 
-  // Helper to normalize question objects from API to our shape
-  const normalizeQuestion = (raw: any): Question => {
-    const textCandidate = raw?.question ?? raw?.text ?? raw?.content ?? raw?.title ?? raw?.body ?? raw?.questionText;
-    const normalized: Question = {
-      id: raw?.id ?? raw?._id ?? Math.floor(Math.random() * 1_000_000_000),
-      question: typeof textCandidate === 'string' && textCandidate.trim().length > 0 ? textCandidate : "[No question text]",
-      type: raw?.type ?? raw?.questionType ?? "-",
-      difficulty: raw?.difficulty ?? raw?.level ?? "-",
-      chapter: raw?.chapter ?? raw?.chapterName ?? (selectedChapter || "-"),
-      marks: Number.isFinite(Number(raw?.marks ?? raw?.mark ?? raw?.points)) ? Number(raw?.marks ?? raw?.mark ?? raw?.points) : 1,
-      text: raw?.text,
-      content: raw?.content,
-    };
-    return normalized;
+  // Helper to normalize question objects from API to our shape (deduped)
+
+  const canonicalType = (t: string | undefined | null): 'MCQ' | 'Short' | 'Long' | '-' => {
+    const s = (t || '-').toLowerCase();
+    if (s.includes('mcq') || s.includes('multiple') || s.includes('objective') || s === 'mcq') return 'MCQ';
+    if (s.includes('short')) return 'Short';
+    if (s.includes('long') || s.includes('descriptive')) return 'Long';
+    return '-';
   };
+
+  // no per-type picking for chapter mode
 
   // Fetch boards from admin panel
   const fetchBoards = async () => {
@@ -745,6 +999,12 @@ const StudentPortal = () => {
           `Failed to fetch questions: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON received for questions endpoint. First 200 chars:', text.slice(0, 200));
+        throw new SyntaxError('Questions API returned non-JSON (HTML). The endpoint may be incorrect or the server returned an error page.');
+      }
       const questionsData = await response.json();
       console.log("Questions data from API:", questionsData);
       console.log("Number of questions loaded:", questionsData.length);
@@ -760,7 +1020,8 @@ const StudentPortal = () => {
       return normalized as Question[];
     } catch (err) {
       console.error("Error fetching questions:", err);
-      setError(`Failed to load questions from admin panel: ${err}`);
+      const msg = err instanceof SyntaxError ? 'Server returned HTML instead of JSON. Please ensure the API URL is correct and the server is running.' : String(err);
+      setError(`Failed to load questions from admin panel: ${msg}`);
       setQuestions((prev) => ({
         ...prev,
         [subjectId]: [],
@@ -780,21 +1041,28 @@ const StudentPortal = () => {
         `${ADMIN_BASE_URL}/api/subjects/${subjectId}/chapters`
       );
       if (!response.ok) throw new Error("Failed to fetch chapters");
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON received for chapters endpoint. First 200 chars:', text.slice(0, 200));
+        throw new SyntaxError('Chapters API returned non-JSON (HTML).');
+      }
       const data = await response.json();
       setChapters(data);
     } catch (err: any) {
-      setError("Failed to load chapters from admin panel: " + err.message);
+      const msg = err instanceof SyntaxError ? 'Server returned HTML instead of JSON. Please check the chapters API.' : err.message;
+      setError("Failed to load chapters from admin panel: " + msg);
     } finally {
       setLoadingChapters(false);
     }
   };
 
-  // Load boards when component mounts and user reaches boards step
+  // Load subjects when a standard is selected
   useEffect(() => {
-    if (currentStep === "boards") {
-      fetchBoards();
+    if (selectedStandard?.id && currentStep === "subjects") {
+      loadSubjectsForStandard(selectedStandard.id);
     }
-  }, [currentStep]);
+  }, [selectedStandard, currentStep]);
 
   // Call fetchChapters when a subject is selected
   useEffect(() => {
@@ -809,6 +1077,24 @@ const StudentPortal = () => {
       return;
     }
 
+    // Throttle OTP requests using localStorage timestamp
+    try {
+      const key = `spg_last_otp_ts_${email.trim().toLowerCase()}`;
+      const lastTsRaw = localStorage.getItem(key);
+      const now = Date.now();
+      if (lastTsRaw) {
+        const lastTs = Number(lastTsRaw);
+        const remaining = OTP_COOLDOWN_MS - (now - lastTs);
+        if (Number.isFinite(lastTs) && remaining > 0) {
+          const seconds = Math.ceil(remaining / 1000);
+          setError(`Please wait ${seconds}s before requesting another OTP.`);
+          return;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+
     // If email already verified on this browser, bypass OTP
     try {
       const savedEmail = localStorage.getItem("spg_logged_in_email");
@@ -816,7 +1102,7 @@ const StudentPortal = () => {
         setIsOtpSent(false);
         setLoading(false);
         setError("");
-        setCurrentStep("boards");
+        setCurrentStep("main-menu");
         toast({ title: "Welcome back", description: "Logged in without OTP." });
         return;
       }
@@ -840,6 +1126,11 @@ const StudentPortal = () => {
         const result = await response.json();
         setIsOtpSent(true);
         setLoading(false);
+        // Save OTP timestamp to enforce cooldown
+        try {
+          const key = `spg_last_otp_ts_${email.trim().toLowerCase()}`;
+          localStorage.setItem(key, String(Date.now()));
+        } catch {}
         toast({
           title: "OTP Sent",
           description: "Please check your email for the verification code.",
@@ -879,7 +1170,22 @@ const StudentPortal = () => {
         try {
           localStorage.setItem("spg_logged_in_email", email);
         } catch {}
-        setCurrentStep("boards");
+        // If board/standard already saved, jump to subjects
+        try {
+          const boardRaw = localStorage.getItem("spg_selected_board");
+          const standardRaw = localStorage.getItem("spg_selected_standard");
+          if (boardRaw && standardRaw) {
+            const board = JSON.parse(boardRaw);
+            const standard = JSON.parse(standardRaw);
+            setSelectedBoard(board);
+            setSelectedStandard(standard);
+            setCurrentStep("subjects");
+          } else {
+            setCurrentStep("main-menu");
+          }
+        } catch {
+          setCurrentStep("main-menu");
+        }
         setLoading(false);
         toast({
           title: "Login Successful",
@@ -899,6 +1205,10 @@ const StudentPortal = () => {
   const selectBoard = async (board: Board) => {
     setSelectedBoard(board);
     setShowBoardsPopup(false);
+    // persist selected board
+    try {
+      localStorage.setItem("spg_selected_board", JSON.stringify(board));
+    } catch {}
 
     // Fetch standards for this board if not already loaded
     if (!standards[board.id]) {
@@ -911,11 +1221,13 @@ const StudentPortal = () => {
   const selectStandard = async (standard: Standard) => {
     setSelectedStandard(standard);
     setShowStandardsPopup(false);
+    // persist selected standard
+    try {
+      localStorage.setItem("spg_selected_standard", JSON.stringify(standard));
+    } catch {}
 
-    // Fetch subjects for this standard if not already loaded
-    if (!subjects[standard.id]) {
-      await fetchSubjects(standard.id);
-    }
+    // Load subjects for this standard
+    await loadSubjectsForStandard(standard.id);
 
     setCurrentStep("subjects");
   };
@@ -928,7 +1240,6 @@ const StudentPortal = () => {
   const createRandomPaper = async () => {
     try {
       if (!selectedSubject?.id) return;
-      // Ensure questions for the subject are loaded
       if (!questions[selectedSubject.id]) {
         await fetchQuestions(selectedSubject.id);
       }
@@ -937,8 +1248,14 @@ const StudentPortal = () => {
         setError("No questions available to generate a random paper.");
         return;
       }
+      // Build by targetTotalMarks: prefer larger marks, but split into sections A/B later
       const picked = pickQuestionsForTarget(pool, targetTotalMarks);
-      setSelectedQuestions(picked);
+      // Shuffle inside MCQ and non-MCQ pools for randomness
+      const withCt = picked.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+      const mcqs = withCt.filter(q => q._ct === 'MCQ').sort(() => Math.random() - 0.5);
+      const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+      const arranged = [...mcqs, ...others];
+      setSelectedQuestions(arranged);
       setSelectedChapter('All Chapters');
       setSelectedQuestionType('Mixed');
       setCurrentStep("paper-review");
@@ -1243,100 +1560,127 @@ const StudentPortal = () => {
 
   if (currentStep === "subjects") {
     return (
-      <div className="min-h-screen bg-gradient-background p-4">
-        <div className="max-w-6xl mx-auto">
-          <Card className="shadow-card animate-fade-in">
-            <CardHeader className="text-center">
-              <CardTitle className="text-3xl font-bold text-foreground mb-2">
-                Select Subject
-              </CardTitle>
-              <CardDescription>
-                {selectedBoard?.name} - {selectedStandard?.name}
-              </CardDescription>
-              <Button
+      <div className="min-h-screen bg-white">
+        <div className="max-w-md mx-auto px-4 py-6">
+         
+
+          {/* Dropdown Selectors */}
+          <div className="mb-6">
+            <div className="flex gap-3">
+              <div 
                 onClick={() => setCurrentStep("boards")}
-                variant="ghost"
-                className="mt-2"
+                className="flex-1 bg-gray-50 border-2 border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
               >
-                <ChevronLeft className="w-4 h-4 mr-2" />
-                Change Board/Standard
-              </Button>
-            </CardHeader>
-
-            <CardContent className="flex flex-col h-[70vh]">
-              {/* Search */}
-              <div className="mb-6 max-w-md mx-auto relative">
-                <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search subjects..."
-                  value={subjectQuery}
-                  onChange={(e) => setSubjectQuery(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-
-              {subjects[selectedStandard?.id || 0] ? (
-                <div className="flex-1 overflow-y-auto pr-2">
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 pb-4">
-                  {subjects[selectedStandard!.id]
-                    .filter((subject) => {
-                      const name = typeof subject === "object" ? subject.name : String(subject);
-                      return name.toLowerCase().includes(subjectQuery.trim().toLowerCase());
-                    })
-                    .sort((a, b) => {
-                      const an = typeof a === "object" ? a.name : String(a);
-                      const bn = typeof b === "object" ? b.name : String(b);
-                      return an.localeCompare(bn);
-                    })
-                    .map((subject, index) => {
-                      const subjectObj = typeof subject === "object" ? subject : { name: subject, price: 0 };
-                      const isFree = !subjectObj.price || subjectObj.price === 0;
-                      
-                      
-                      return (
-                        <Card
-                          key={index}
-                          onClick={() => selectSubject(subjectObj)}
-                          className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group h-full"
-                        >
-                          <CardContent className="p-5 h-full">
-                            <div className="flex flex-col items-center text-center gap-3 h-full">
-                              <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                                <BookOpen className="w-6 h-6" />
-                              </div>
-                              <div className="flex-1 min-w-0 w-full">
-                                <h3 className="text-base font-semibold whitespace-normal break-words hyphens-auto leading-snug">
-                                  {subjectObj.name}
-                                </h3>
-                              </div>
-                              <div className="mt-1 flex flex-col gap-2">
-                                {isFree ? (
-                                  <Badge variant="secondary" className="text-xs bg-green-100 text-green-800">
-                                    <span className="mr-1">✓</span> Free
-                                  </Badge>
-                                ) : (
-                                  <div className="flex items-center gap-1 text-sm font-semibold text-orange-600">
-                                    <IndianRupee className="w-3 h-3" />
-                                    {subjectObj.price}
-                                  </div>
-                                )}
-                                <Badge variant="secondary" className="text-xs">Subject</Badge>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Board</div>
+                    <div className="text-sm font-semibold text-gray-800 truncate">{selectedBoard?.name || "Select Board"}</div>
+                  </div>
+                  <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-sm ml-2">
+                    <ChevronRight className="w-3 h-3 text-gray-500" />
                   </div>
                 </div>
-              ) : (
-                <div className="text-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-academic-purple" />
-                  <p className="text-muted-foreground mt-2">Loading subjects...</p>
+              </div>
+              
+              <div 
+                onClick={() => setCurrentStep("boards")}
+                className="flex-1 bg-gray-50 border-2 border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Standard</div>
+                    <div className="text-sm font-semibold text-gray-800 truncate">{selectedStandard?.name || "Select Standard"}</div>
+                  </div>
+                  <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-sm ml-2">
+                    <ChevronRight className="w-3 h-3 text-gray-500" />
+                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            </div>
+          </div>
+
+          {/* Search */}
+          <div className="mb-6">
+            <div className="relative">
+              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search subjects..."
+                value={subjectQuery}
+                onChange={(e) => setSubjectQuery(e.target.value)}
+                className="pl-10 bg-gray-50 border-gray-200 rounded-lg"
+              />
+            </div>
+          </div>
+
+
+          {/* Subjects Grid */}
+          <div className="min-h-[50vh]">
+            {!selectedBoard || !selectedStandard ? (
+              <div className="text-center py-16">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <GraduationCap className="w-8 h-8 text-gray-400" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-600 mb-2">Select Board & Standard</h3>
+                <p className="text-gray-500 text-sm">Please select your board and standard to view subjects</p>
+              </div>
+            ) : loadingBoards ? (
+              <div className="text-center py-16">
+                <Loader2 className="w-8 h-8 animate-spin text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600 text-sm">Loading subjects...</p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                <div className="grid grid-cols-4 gap-6 pb-4">
+                  {subjects[selectedStandard.id] ? (
+                    subjects[selectedStandard.id]
+                      .filter((subject) => {
+                        const name = typeof subject === "object" ? subject.name : String(subject);
+                        return name.toLowerCase().includes(subjectQuery.trim().toLowerCase());
+                      })
+                      .sort((a, b) => {
+                        const an = typeof a === "object" ? a.name : String(a);
+                        const bn = typeof b === "object" ? b.name : String(b);
+                        return an.localeCompare(bn);
+                      })
+                      .map((subject, index) => {
+                        const subjectObj = typeof subject === "object" ? subject : { name: subject, price: 0 };
+                        const isFree = !subjectObj.price || subjectObj.price === 0;
+                        
+                        return (
+                          <div
+                            key={index}
+                            onClick={() => selectSubject(subjectObj)}
+                            className="cursor-pointer flex flex-col items-center gap-3 p-2 hover:opacity-80 transition-opacity duration-200"
+                          >
+                            <div className="w-16 h-16 bg-white border-2 border-gray-200 rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-shadow duration-200">
+                              <BookOpen className="w-8 h-8 text-gray-600" />
+                            </div>
+                            <div className="text-center">
+                              <h3 className="text-xs font-medium text-gray-800 leading-tight">
+                                {subjectObj.name}
+                              </h3>
+                              {isFree ? (
+                                <span className="text-xs text-green-600 font-medium mt-1 block">
+                                  Free
+                                </span>
+                              ) : (
+                                <span className="text-xs text-orange-600 font-medium mt-1 block">
+                                  ₹{subjectObj.price}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <div className="col-span-4 text-center py-8">
+                      <p className="text-gray-500">No subjects available for this standard</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         
         {/* Payment Modal */}
@@ -1413,6 +1757,59 @@ const StudentPortal = () => {
     );
   }
 
+  if (currentStep === "main-menu") {
+    return (
+      <div className="min-h-screen bg-white">
+        <div className="max-w-md mx-auto px-4 py-6">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Study Path Genie</h1>
+            <p className="text-gray-600">Choose what you'd like to do</p>
+          </div>
+
+          {/* Menu Options */}
+          <div className="space-y-4">
+            {/* Generate Papers */}
+            <div
+              onClick={() => setCurrentStep("boards")}
+              className="cursor-pointer bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl p-6 hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                  <BookOpen className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-xl">Generate Papers</h3>
+                  <p className="text-blue-100 text-sm">Create question papers for your subjects</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Created Papers */}
+            <div
+              onClick={() => setCurrentStep("created-papers")}
+              className="cursor-pointer bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl p-6 hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-lg hover:shadow-xl"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                  <FileText className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-xl">Created Papers</h3>
+                  <p className="text-green-100 text-sm">View and manage your generated papers</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentStep === "created-papers") {
+    return <CreatedPapers onBack={() => setCurrentStep("main-menu")} />;
+  }
+
   if (currentStep === "paper-options") {
     return (
       <div className="min-h-screen bg-gradient-background p-4">
@@ -1482,7 +1879,7 @@ const StudentPortal = () => {
                 <Card
                   onClick={() => {
                     setPaperMode("chapter");
-                    setCurrentStep("chapter-selection");
+                    setCurrentStep("multi-chapter-selection");
                   }}
                   className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
                 >
@@ -1503,7 +1900,7 @@ const StudentPortal = () => {
                 <Card
                   onClick={() => {
                     setPaperMode("custom");
-                    setCurrentStep("chapter-selection");
+                    setCurrentStep("custom-builder");
                   }}
                   className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
                 >
@@ -1541,6 +1938,120 @@ const StudentPortal = () => {
     );
   }
 
+  // New: Multi Chapter Selection and Auto Generation
+  if (currentStep === "multi-chapter-selection") {
+    const toggleChapter = (chapterId: number) => {
+      setSelectedChapters(prev => prev.includes(chapterId)
+        ? prev.filter(id => id !== chapterId)
+        : [...prev, chapterId]);
+    };
+
+    const generateFromSelectedChapters = async () => {
+      if (!selectedSubject?.id || selectedChapters.length === 0) return;
+      setMultiChapterLoading(true);
+      setError("");
+      try {
+        const aggregated: Question[] = [];
+        for (const chapterId of selectedChapters) {
+          const response = await fetch(`${ADMIN_BASE_URL}/api/chapters/${chapterId}/questions`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to fetch questions for chapter ${chapterId}: ${response.status} ${response.statusText} - ${errorText}`);
+          }
+          const data: any[] = await response.json();
+          const normalized = data.map((q) => normalizeQuestion(q));
+          aggregated.push(...(normalized as Question[]));
+        }
+
+        setSelectedQuestions(aggregated);
+        const selectedNames = chapters.filter(c => selectedChapters.includes(c.id)).map(c => c.name);
+        setSelectedChapter(selectedNames);
+        setCurrentStep("paper-review");
+      } catch (err: any) {
+        setError(`Failed to generate from chapters: ${err.message || err}`);
+      } finally {
+        setMultiChapterLoading(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gradient-background p-4">
+        <div className="max-w-6xl mx-auto">
+          <Card className="shadow-card animate-fade-in">
+            <CardHeader className="text-center">
+              <CardTitle className="text-3xl font-bold text-foreground mb-2">
+                Select Chapters
+              </CardTitle>
+              <CardDescription>
+                {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
+              </CardDescription>
+              <Button
+                onClick={() => setCurrentStep("paper-options")}
+                variant="ghost"
+                className="mt-2"
+              >
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Change Paper Mode
+              </Button>
+            </CardHeader>
+
+            <CardContent>
+              {chapters.length > 0 ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {chapters.map((chapter) => (
+                      <Card key={chapter.id} className="p-4">
+                        <div className="flex items-start space-x-3">
+                          <Checkbox
+                            id={`chapter-${chapter.id}`}
+                            checked={selectedChapters.includes(chapter.id)}
+                            onCheckedChange={() => toggleChapter(chapter.id)}
+                          />
+                          <Label htmlFor={`chapter-${chapter.id}`} className="cursor-pointer">
+                            {chapter.name}
+                          </Label>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-muted-foreground">
+                      {selectedChapters.length} chapter{selectedChapters.length === 1 ? '' : 's'} selected
+                    </div>
+                    <Button
+                      onClick={generateFromSelectedChapters}
+                      disabled={selectedChapters.length === 0 || multiChapterLoading}
+                      className="bg-academic-blue hover:bg-academic-blue/90"
+                    >
+                      {multiChapterLoading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Generating...
+                        </>
+                      ) : (
+                        <>Generate Paper</>
+                      )}
+                    </Button>
+                  </div>
+
+                  {error && (
+                    <Alert variant="destructive" className="mt-2">
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">No chapters available</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   if (currentStep === "chapter-selection") {
     return (
       <div className="min-h-screen bg-gradient-background p-4">
@@ -1548,7 +2059,7 @@ const StudentPortal = () => {
           <Card className="shadow-card animate-fade-in">
             <CardHeader className="text-center">
               <CardTitle className="text-3xl font-bold text-foreground mb-2">
-                Select Chapter
+                {paperMode === 'chapter' ? 'Select Chapters' : 'Select Chapter'}
               </CardTitle>
               <CardDescription>
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
@@ -1575,6 +2086,8 @@ const StudentPortal = () => {
                 />
               </div>
 
+              {/* Removed marks input here for Random Paper, keep it on review page only */}
+
               {chapters.length > 0 ? (
                 <div className="space-y-3">
                   {chapters
@@ -1583,35 +2096,27 @@ const StudentPortal = () => {
                     .map((chapter, index) => (
                     <Card
                       key={chapter.id || index}
-                      onClick={() => {
-                        const handleChapterSelect = async () => {
-                          setSelectedChapter(chapter.name);
-                          if (paperMode === 'random') {
-                            // Generate random from this chapter
-                            const data = await fetchQuestions(selectedSubject.id!, chapter.name);
-                            const pool = data || [];
-                            if (pool.length === 0) {
-                              setError("No questions available in this chapter.");
-                              return;
-                            }
-                            const picked = pickQuestionsForTarget(pool, targetTotalMarks);
-                            setSelectedQuestions(picked);
-                            setSelectedQuestionType('Mixed');
-                            setCurrentStep("paper-review");
-                          } else {
-                            await fetchQuestions(selectedSubject.id!, chapter.name);
-                            setCurrentStep("question-type-selection");
-                          }
-                        };
-                        handleChapterSelect();
-                      }}
-                      className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                      className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200"
                     >
                       <CardContent className="p-4">
                         <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors">
-                            <BookOpen className="w-5 h-5" />
-                          </div>
+                          {paperMode === 'chapter' ? (
+                            <Checkbox
+                              id={`chapter-${chapter.id}`}
+                              checked={selectedChapterNames.includes(chapter.name)}
+                              onCheckedChange={(checked) => {
+                                setSelectedChapterNames(prev => {
+                                  const set = new Set(prev);
+                                  if (checked) set.add(chapter.name); else set.delete(chapter.name);
+                                  return Array.from(set);
+                                });
+                              }}
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                              <BookOpen className="w-5 h-5" />
+                            </div>
+                          )}
                           <div className="min-w-0 flex-1">
                             <h3 className="text-base font-semibold whitespace-normal break-words leading-snug">
                               {chapter.name}
@@ -1620,7 +2125,35 @@ const StudentPortal = () => {
                               <Badge variant="secondary" className="text-xs">Chapter</Badge>
                             </div>
                           </div>
-                          <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          {paperMode !== 'chapter' && (
+                            <Button
+                              onClick={() => {
+                                const handleChapterSelect = async () => {
+                                  setSelectedChapter(chapter.name);
+                                  if (paperMode === 'random') {
+                                    const data = await fetchQuestions(selectedSubject.id!, chapter.name);
+                                    const pool = data || [];
+                                    if (pool.length === 0) { setError("No questions available in this chapter."); return; }
+                                    const picked = pickQuestionsForTarget(pool, targetTotalMarks);
+                                    const withCt = picked.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+                                    const mcqs = withCt.filter(q => q._ct === 'MCQ').sort(() => Math.random() - 0.5);
+                                    const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+                                    const arranged = [...mcqs, ...others];
+                                    setSelectedQuestions(arranged);
+                                    setSelectedQuestionType('Mixed');
+                                    setCurrentStep("paper-review");
+                                  } else {
+                                    await fetchQuestions(selectedSubject.id!, chapter.name);
+                                    setCurrentStep("question-type-selection");
+                                  }
+                                };
+                                handleChapterSelect();
+                              }}
+                              variant="secondary"
+                            >
+                              Select
+                            </Button>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
@@ -1629,6 +2162,45 @@ const StudentPortal = () => {
               ) : (
                 <div className="text-center py-12">
                   <p className="text-muted-foreground">No chapters available</p>
+                </div>
+              )}
+
+              {paperMode === 'chapter' && (
+                <div className="mt-6">
+                  <div className="flex justify-end">
+                    <Button
+                      disabled={selectedChapterNames.length === 0}
+                      onClick={async () => {
+                        try {
+                          if (!selectedSubject?.id) return;
+                          // Fetch all questions from selected chapters
+                          const all: Question[] = [];
+                          for (const chName of selectedChapterNames) {
+                            const data = await fetchQuestions(selectedSubject.id!, chName);
+                            all.push(...data);
+                          }
+                          const allowed = new Set(selectedChapterNames);
+                          const pool = all.filter(q => allowed.has(q.chapter));
+                          if (pool.length === 0) {
+                            setError('No questions found in selected chapters.');
+                            return;
+                          }
+                          setSelectedQuestions(pool);
+                          setSelectedChapter(selectedChapterNames.join(', '));
+                          setSelectedQuestionType('Mixed');
+                          // Immediately generate PDF
+                          await new Promise(resolve => setTimeout(resolve, 0));
+                          await generatePDF();
+                        } catch (e) {
+                          console.error(e);
+                          setError('Failed to generate PDF from selected chapters.');
+                        }
+                      }}
+                      className="bg-academic-blue hover:bg-academic-blue/90"
+                    >
+                      Generate PDF
+                    </Button>
+                  </div>
                 </div>
               )}
 
@@ -1866,54 +2438,135 @@ const StudentPortal = () => {
 
                   {/* Scrollable questions container */}
                   <div className="flex-1 overflow-y-auto pr-2">
-                    <div className="space-y-4 pb-4">
-                      {selectedQuestions.map((question, index) => (
-                        <Card key={question.id} className="p-3 sm:p-4">
-                          <div className="flex flex-col gap-3">
-                            <div className="flex items-center justify-between">
-                              <h4 className="font-semibold text-sm sm:text-base">Q{index + 1}</h4>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedQuestions(prev => prev.filter(q => q.id !== question.id));
-                                }}
-                                className="text-red-500 hover:text-red-700 text-xs sm:text-sm"
-                              >
-                                Remove
-                              </Button>
+                    <div className="space-y-6 pb-4">
+                      {(() => {
+                        // If user built custom sections/subsections, render them
+                        if (customSections.length > 0) {
+                          let qNum = 1;
+                          const nonEmptySections = customSections.filter(sec => sec.subsections.some(sub => sub.questions.length > 0));
+                          return nonEmptySections.map((sec, sidx) => (
+                            <div key={sec.id} className="space-y-3">
+                              <h3 className="font-semibold text-base">{`Section ${String.fromCharCode(65 + sidx)}: ${sec.title || '-'}`}</h3>
+                              {sec.subsections.filter(sub => sub.questions.length > 0).map(sub => (
+                                <div key={sub.id} className="space-y-2">
+                                  <div className="font-medium text-sm">{sub.title || '-'}</div>
+                                  {sub.questions.map((q) => {
+                                    const index = qNum++;
+                                    return (
+                                      <Card key={q.id} className="p-3 sm:p-4">
+                                        <div className="flex flex-col gap-3">
+                                          <div className="flex items-center justify-between">
+                                            <h4 className="font-semibold text-sm sm:text-base">Q{index}</h4>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => {
+                                                setCustomSections(prev => prev.map(s => s.id === sec.id ? { ...s, subsections: s.subsections.map(su => su.id === sub.id ? { ...su, questions: su.questions.filter(qq => qq.id !== q.id) } : su) } : s));
+                                              }}
+                                              className="text-red-500 hover:text-red-700 text-xs sm:text-sm"
+                                            >
+                                              Remove
+                                            </Button>
+                                          </div>
+                                          <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                                            <div className="sm:col-span-5">
+                                              <Label className="text-xs sm:text-sm">Question Text</Label>
+                                              <textarea
+                                                value={q.text}
+                                                onChange={(e) => {
+                                                  const value = e.target.value;
+                                                  setCustomSections(prev => prev.map(s => s.id === sec.id ? {
+                                                    ...s,
+                                                    subsections: s.subsections.map(su => su.id === sub.id ? {
+                                                      ...su,
+                                                      questions: su.questions.map(qq => qq.id === q.id ? { ...qq, text: value } : qq)
+                                                    } : su)
+                                                  } : s));
+                                                }}
+                                                className="w-full min-h-[60px] sm:min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-xs sm:text-sm resize-none"
+                                              />
+                                            </div>
+                                            <div>
+                                              <Label className="text-xs sm:text-sm">Marks</Label>
+                                              <Input
+                                                type="number"
+                                                value={String(q.marks)}
+                                                readOnly
+                                                className="text-xs sm:text-sm opacity-70 cursor-not-allowed"
+                                              />
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </Card>
+                                    );
+                                  })}
+                                </div>
+                              ))}
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
-                              <div className="sm:col-span-5">
-                                <Label className="text-xs sm:text-sm">Question Text</Label>
-                                <textarea
-                                  value={question.question}
-                                  onChange={(e) => {
-                                    const value = e.target.value;
-                                    setSelectedQuestions(prev => prev.map(q => q.id === question.id ? { ...q, question: value } : q));
-                                  }}
-                                  className="w-full min-h-[60px] sm:min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-xs sm:text-sm resize-none"
-                                />
-                              </div>
-                              <div>
-                                <Label className="text-xs sm:text-sm">Marks</Label>
-                                <Input
-                                  type="number"
-                                  value={Number.isFinite(question.marks) ? String(question.marks) : ''}
-                                  onChange={(e) => {
-                                    const value = parseInt(e.target.value || '0', 10);
-                                    setSelectedQuestions(prev => prev.map(q => q.id === question.id ? { ...q, marks: value } : q));
-                                  }}
-                                  className="text-xs sm:text-sm"
-                                />
-                              </div>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              Difficulty: {question.difficulty || '-'} • Type: {question.type || '-'}
-                            </div>
+                          ));
+                        }
+
+                        // Default grouping view (MCQ/Others) when not using custom builder
+                        const withCt = selectedQuestions.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+                        const mcqItems = withCt.filter(q => q._ct === 'MCQ');
+                        const otherItems = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+                        const nonEmpty: { title: string; items: typeof withCt }[] = [];
+                        if (mcqItems.length > 0) nonEmpty.push({ title: 'Section A: MCQ', items: mcqItems });
+                        if (otherItems.length > 0) nonEmpty.push({ title: nonEmpty.length === 0 ? 'Section A: Others' : 'Section B: Others', items: otherItems });
+                        let qNum = 1;
+                        return nonEmpty.map((sec, idx) => (
+                          <div key={idx} className="space-y-3">
+                            <h3 className="font-semibold text-base">{sec.title}</h3>
+                            {sec.items.map((question) => {
+                              const index = qNum++;
+                              return (
+                                <Card key={question.id} className="p-3 sm:p-4">
+                                  <div className="flex flex-col gap-3">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="font-semibold text-sm sm:text-base">Q{index}</h4>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedQuestions(prev => prev.filter(q => q.id !== question.id));
+                                        }}
+                                        className="text-red-500 hover:text-red-700 text-xs sm:text-sm"
+                                      >
+                                        Remove
+                                      </Button>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                                      <div className="sm:col-span-5">
+                                        <Label className="text-xs sm:text-sm">Question Text</Label>
+                                        <textarea
+                                          value={question.question || (question as any).text || (question as any).content || ''}
+                                          onChange={(e) => {
+                                            const value = e.target.value;
+                                            setSelectedQuestions(prev => prev.map(q => q.id === question.id ? { ...q, question: value } : q));
+                                          }}
+                                          className="w-full min-h-[60px] sm:min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-xs sm:text-sm resize-none"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-xs sm:text-sm">Marks</Label>
+                                        <Input
+                                          type="number"
+                                          value={Number.isFinite(question.marks) ? String(question.marks) : ''}
+                                          readOnly
+                                          className="text-xs sm:text-sm opacity-70 cursor-not-allowed"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      Difficulty: {question.difficulty || '-'} • Type: {question.type || '-'}
+                                    </div>
+                                  </div>
+                                </Card>
+                              );
+                            })}
                           </div>
-                        </Card>
-                      ))}
+                        ));
+                      })()}
                     </div>
                   </div>
 
@@ -1968,7 +2621,8 @@ const StudentPortal = () => {
                     <div key={question.id} className="border-b pb-4">
                       <div className="flex justify-between items-start mb-2">
                         <h3 className="text-lg font-semibold">
-                          Q{index + 1}. {question.question}
+                          Q{index + 1}. {getQuestionText(question) || '[No question text]'}
+                          Q{index + 1}. {getQuestionText(question) || '[No question text]'}
                         </h3>
                         <div className="text-sm text-muted-foreground">
                           {question.marks} marks • {question.difficulty} • {question.chapter}
@@ -1990,6 +2644,216 @@ const StudentPortal = () => {
                 <Alert variant="destructive" className="mt-4">
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentStep === "custom-builder") {
+    const addSection = () => {
+      setCustomSections(prev => [...prev, { id: `sec-${Date.now()}`, title: `Section ${String.fromCharCode(65 + prev.length)}`, subsections: [] }]);
+    };
+    const addSubsection = (secId: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, subsections: [...s.subsections, { id: `sub-${Date.now()}`, title: 'Subsection', questions: [] }] } : s));
+    };
+    const addQuestion = (secId: string, subId: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, subsections: s.subsections.map(sub => sub.id === subId ? { ...sub, questions: [...sub.questions, { id: `q-${Date.now()}`, text: '', marks: 1 }] } : sub) } : s));
+    };
+    const updateTitles = (secId: string, value: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, title: value } : s));
+    };
+    const updateSubTitle = (secId: string, subId: string, value: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, subsections: s.subsections.map(sub => sub.id === subId ? { ...sub, title: value } : sub) } : s));
+    };
+    const updateQuestion = (secId: string, subId: string, qId: string, key: 'text' | 'marks', value: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, subsections: s.subsections.map(sub => sub.id === subId ? { ...sub, questions: sub.questions.map(q => q.id === qId ? { ...q, [key]: key === 'marks' ? Math.max(0, parseInt(value || '0', 10)) : value } : q) } : sub) } : s));
+    };
+    const removeQuestion = (secId: string, subId: string, qId: string) => {
+      setCustomSections(prev => prev.map(s => s.id === secId ? { ...s, subsections: s.subsections.map(sub => sub.id === subId ? { ...sub, questions: sub.questions.filter(q => q.id !== qId) } : sub) } : s));
+    };
+    const buildAndGoToReview = () => {
+      const qs: Question[] = [] as any;
+      customSections.forEach((s) => {
+        s.subsections.forEach((sub) => {
+          sub.questions.forEach((q) => {
+            qs.push({ id: Math.random()*1e12, question: q.text || '[No question text]', type: sub.title || '-', difficulty: '-', chapter: s.title, marks: q.marks });
+          });
+        });
+      });
+      setSelectedQuestions(qs);
+      setSelectedChapter('Custom');
+      setSelectedQuestionType('Mixed');
+      setCurrentStep('paper-review');
+    };
+
+    return (
+      <div className="min-h-screen bg-gradient-background p-4">
+        <div className="max-w-6xl mx-auto">
+          <Card className="shadow-card animate-fade-in">
+            <CardHeader className="text-center">
+              <CardTitle className="text-3xl font-bold text-foreground mb-2">Custom Paper Builder</CardTitle>
+              <CardDescription>{selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}</CardDescription>
+              <Button onClick={() => setCurrentStep('paper-options')} variant="ghost" className="mt-2">
+                <ChevronLeft className="w-4 h-4 mr-2" /> Back
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Sections area */}
+              <div className="space-y-4">
+                {customSections.map((sec) => (
+                  <div key={sec.id} className="border rounded-md p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <Input value={sec.title} onChange={(e) => updateTitles(sec.id, e.target.value)} placeholder="Section title (e.g., Section A)" />
+                      </div>
+                      <Button onClick={() => addSubsection(sec.id)} variant="secondary" size="icon" title="Add Subsection">
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {sec.subsections.map((sub) => (
+                        <div key={sub.id} className="rounded-md border p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                            <div className="md:col-span-2">
+                              <Input value={sub.title} onChange={(e) => updateSubTitle(sec.id, sub.id, e.target.value)} placeholder="Subsection title (e.g., MCQ / Short / Long)" />
+                            </div>
+                            <div className="flex gap-2 md:justify-end">
+                              <Button onClick={() => addQuestion(sec.id, sub.id)} size="sm">Add Question</Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={async () => {
+                                  setPickerSubId(sub.id);
+                                  setPickerSelected(new Set());
+                                  setPickerChapter('');
+                                  setPickerQuestions([]);
+                                }}
+                              >
+                                Add from Bank
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            {sub.questions.map((q) => (
+                              <div key={q.id} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-start">
+                                <div className="md:col-span-5">
+                                  <Label className="text-xs">Question</Label>
+                                  <textarea
+                                    value={q.text}
+                                    onChange={(e) => setCustomSections(prev => prev.map(s => s.id === sec.id ? { ...s, subsections: s.subsections.map(su => su.id === sub.id ? { ...su, questions: su.questions.map(qq => qq.id === q.id ? { ...qq, text: e.target.value } : qq) } : su) } : s))}
+                                    className="w-full min-h-[56px] rounded-md border border-input bg-background px-3 py-2 text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Marks</Label>
+                                  <Input type="number" value={String(q.marks)} onChange={(e) => setCustomSections(prev => prev.map(s => s.id === sec.id ? { ...s, subsections: s.subsections.map(su => su.id === sub.id ? { ...su, questions: su.questions.map(qq => qq.id === q.id ? { ...qq, marks: Math.max(0, parseInt(e.target.value || '0', 10)) } : qq) } : su) } : s))} />
+                                  <Button variant="ghost" size="sm" className="text-red-500 mt-1" onClick={() => removeQuestion(sec.id, sub.id, q.id)}>Remove</Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Inline bank picker */}
+                          {pickerSubId === sub.id && (
+                            <div className="mt-4 border rounded-md p-3 bg-gray-50">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                                <div className="md:col-span-2">
+                                  <Label className="text-xs">Choose Chapter</Label>
+                                  <select
+                                    className="w-full border rounded-md h-9 px-2"
+                                    value={pickerChapter}
+                                    onChange={async (e) => {
+                                      const name = e.target.value;
+                                      setPickerChapter(name);
+                                      if (!selectedSubject?.id || !name) { setPickerQuestions([]); return; }
+                                      setPickerLoading(true);
+                                      const data = await fetchQuestions(selectedSubject.id, name);
+                                      setPickerQuestions(data);
+                                      setPickerLoading(false);
+                                    }}
+                                  >
+                                    <option value="">-- Select chapter --</option>
+                                    {chapters.map(c => (
+                                      <option key={c.id} value={c.name}>{c.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="flex md:justify-end">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => {
+                                      // Add selected to subsection
+                                      const chosen = pickerQuestions.filter(q => pickerSelected.has(q.id));
+                                      if (chosen.length === 0) { setPickerSubId(null); return; }
+                                      setCustomSections(prev => prev.map(s => s.id === sec.id ? {
+                                        ...s,
+                                        subsections: s.subsections.map(su => su.id === sub.id ? {
+                                          ...su,
+                                          questions: [
+                                            ...su.questions,
+                                            ...chosen.map(q => ({ id: `q-${q.id}-${Date.now()}`, text: q.question || (q as any).text || (q as any).content || '[No question text]', marks: q.marks || 1 }))
+                                          ]
+                                        } : su)
+                                      } : s));
+                                      setPickerSubId(null);
+                                    }}
+                                  >
+                                    Add Selected
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="mt-3">
+                                {pickerLoading ? (
+                                  <div className="text-sm text-muted-foreground">Loading questions...</div>
+                                ) : pickerQuestions.length === 0 ? (
+                                  <div className="text-sm text-muted-foreground">Select a chapter to view questions.</div>
+                                ) : (
+                                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                                    {pickerQuestions.map(q => (
+                                      <label key={q.id} className="flex items-start gap-2 p-2 border rounded-md bg-white">
+                                        <input
+                                          type="checkbox"
+                                          checked={pickerSelected.has(q.id)}
+                                          onChange={(e) => {
+                                            setPickerSelected(prev => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked) next.add(q.id); else next.delete(q.id);
+                                              return next;
+                                            });
+                                          }}
+                                        />
+                                        <div className="text-sm">
+                                          <div className="font-medium">{q.question || (q as any).text || (q as any).content || '[No question text]'}</div>
+                                          <div className="text-xs text-muted-foreground">Marks: {q.marks ?? '-'} • {q.type ?? '-'}</div>
+                                        </div>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-center">
+                <Button onClick={addSection} variant="default" className="rounded-full">
+                  <Plus className="w-4 h-4 mr-2" /> Add Section
+                </Button>
+              </div>
+
+              {customSections.length > 0 && (
+                <div className="flex justify-end">
+                  <Button onClick={buildAndGoToReview} className="bg-academic-blue hover:bg-academic-blue/90">Continue to Review</Button>
+                </div>
               )}
             </CardContent>
           </Card>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">study-path-genie</string>
+    <string name="title_activity_main">study-path-genie</string>
+    <string name="package_name">com.study.pathgenie</string>
+    <string name="custom_url_scheme">com.study.pathgenie</string>
+</resources>

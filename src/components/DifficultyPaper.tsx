@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Card, CardHeader, CardTitle, CardContent, Button, Label } from "./ui";
+import { Card, CardHeader, CardTitle, CardContent, Button, Label } from "@/components/ui";
+import LatexPreview from "./LatexPreview";
 
 const difficultyLevels = [
   { label: "Easy", value: "easy", color: "bg-green-400" },
@@ -113,7 +114,10 @@ export default function DifficultyPaper({ subject, standard, board, onBack }) {
               <div className="bg-white rounded-lg p-4 mb-4">
                 {generatedQuestions.map((q, i) => (
                   <div key={q.id} className="mb-3">
-                    <div className="font-bold">Q{i + 1}. {q.text}</div>
+                    <div className="font-bold flex gap-2">
+                      <span>Q{i + 1}.</span>
+                      <LatexPreview content={q.text} />
+                    </div>
                     <div className="text-sm text-gray-500">Type: {q.type}</div>
                   </div>
                 ))}

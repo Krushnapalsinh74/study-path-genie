@@ -651,11 +651,11 @@ const StudentPortal = () => {
             setCurrentStep("subjects");
             toast({ title: "Welcome back", description: "Restored your board and standard." });
           } catch {
-            setCurrentStep("main-menu");
+            setCurrentStep("subjects");
             toast({ title: "Welcome back", description: "Logged in from previous session." });
           }
         } else {
-          setCurrentStep("main-menu");
+          setCurrentStep("subjects");
           toast({ title: "Welcome back", description: "Logged in from previous session." });
         }
       }
@@ -1158,6 +1158,33 @@ const StudentPortal = () => {
     }
   };
 
+  // Auto-load boards when reaching subjects page without selection
+  useEffect(() => {
+    if (currentStep === "subjects" && !selectedBoard && !selectedStandard && boards.length === 0) {
+      fetchBoards();
+    }
+  }, [currentStep, selectedBoard, selectedStandard, boards.length]);
+
+  // Auto-select first board when boards are loaded and no board is selected
+  useEffect(() => {
+    if (currentStep === "subjects" && !selectedBoard && boards.length > 0) {
+      const defaultBoard = boards[0];
+      setSelectedBoard(defaultBoard);
+      fetchStandards(defaultBoard.id);
+    }
+  }, [currentStep, selectedBoard, boards]);
+
+  // Auto-select first standard when standards are loaded and no standard is selected
+  useEffect(() => {
+    if (currentStep === "subjects" && selectedBoard && !selectedStandard) {
+      const boardStandards = standards[selectedBoard.id];
+      if (boardStandards && boardStandards.length > 0) {
+        const defaultStandard = boardStandards[0];
+        setSelectedStandard(defaultStandard);
+      }
+    }
+  }, [currentStep, selectedBoard, selectedStandard, standards]);
+
   // Load subjects when a standard is selected
   useEffect(() => {
     if (selectedStandard?.id && currentStep === "subjects") {
@@ -1203,7 +1230,7 @@ const StudentPortal = () => {
         setIsOtpSent(false);
         setLoading(false);
         setError("");
-        setCurrentStep("main-menu");
+        setCurrentStep("subjects");
         toast({ title: "Welcome back", description: "Logged in without OTP." });
         return;
       }
@@ -1282,10 +1309,10 @@ const StudentPortal = () => {
             setSelectedStandard(standard);
             setCurrentStep("subjects");
           } else {
-            setCurrentStep("main-menu");
+            setCurrentStep("subjects");
           }
         } catch {
-          setCurrentStep("main-menu");
+          setCurrentStep("subjects");
         }
         setLoading(false);
         toast({
@@ -1901,54 +1928,6 @@ const StudentPortal = () => {
     );
   }
 
-  if (currentStep === "main-menu") {
-    return (
-      <div className="min-h-screen bg-white">
-        <div className="max-w-md mx-auto px-4 py-6">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">Study Path Genie</h1>
-            <p className="text-gray-600">Choose what you'd like to do</p>
-          </div>
-
-          {/* Menu Options */}
-          <div className="space-y-4">
-            {/* Generate Papers */}
-            <div
-              onClick={() => setCurrentStep("boards")}
-              className="cursor-pointer bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl p-6 hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
-                  <BookOpen className="w-7 h-7" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-xl">Generate Papers</h3>
-                  <p className="text-blue-100 text-sm">Create question papers for your subjects</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Created Papers */}
-            <div
-              onClick={() => setCurrentStep("created-papers")}
-              className="cursor-pointer bg-gradient-to-r from-green-500 to-green-600 text-white rounded-xl p-6 hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-lg hover:shadow-xl"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
-                  <FileText className="w-7 h-7" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-xl">Created Papers</h3>
-                  <p className="text-green-100 text-sm">View and manage your generated papers</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (currentStep === "created-papers") {
     return <CreatedPapers onBack={() => {
@@ -1956,7 +1935,7 @@ const StudentPortal = () => {
       if (selectedBoard && selectedStandard) {
         setCurrentStep("subjects");
       } else {
-        setCurrentStep("main-menu");
+        setCurrentStep("subjects");
       }
     }} />;
   }

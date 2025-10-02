@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Card, CardHeader, CardTitle, CardContent, Button, Label, Checkbox } from "./ui";
+import { Card, CardHeader, CardTitle, CardContent, Button, Label, Checkbox } from "@/components/ui";
+import LatexPreview from "./LatexPreview";
 
 const questionCounts = [10, 20, 30, 50];
 const paperTypes = ["MCQ", "Short Answer", "Mixed"];
@@ -92,7 +93,10 @@ export default function RandomPaper({ subject, standard, board, onBack }) {
               <div className="bg-white rounded-lg p-6 mb-4 shadow-md">
                 {generatedQuestions.map((q, i) => (
                   <div key={q.id} className="mb-4 pb-2 border-b">
-                    <div className="font-bold text-lg">Q{i + 1}. {q.text}</div>
+                    <div className="font-bold text-lg flex gap-2">
+                      <span>Q{i + 1}.</span>
+                      <LatexPreview content={q.text} />
+                    </div>
                     <div className="text-sm text-gray-500">Type: {q.type}</div>
                   </div>
                 ))}

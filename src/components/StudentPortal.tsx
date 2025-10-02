@@ -9,7 +9,9 @@ import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, 
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
+import LatexPreview from "./LatexPreview";
 import CreatedPapers from "./CreatedPapers";
+import katex from "katex";
 
 // OTP cooldown (in milliseconds)
 const OTP_COOLDOWN_MS = 60_000;
@@ -332,6 +334,31 @@ const StudentPortal = () => {
 
   const containsComplexScript = (text: string) => /[\u0A80-\u0AFF\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF]/.test(text);
 
+  // Convert $...$ and $$...$$ segments to KaTeX HTML for PDF HTML rendering
+  const latexToHtml = (text: string): string => {
+    if (!text) return "";
+    const parts = text.split(/(\$\$[^$]*\$\$|\$[^$]*\$)/g);
+    const html = parts.map((part) => {
+      if (part.startsWith("$$") && part.endsWith("$$")) {
+        const latexContent = part.slice(2, -2).trim();
+        try {
+          return katex.renderToString(latexContent, { displayMode: true, throwOnError: false });
+        } catch {
+          return part;
+        }
+      } else if (part.startsWith("$") && part.endsWith("$")) {
+        const latexContent = part.slice(1, -1).trim();
+        try {
+          return katex.renderToString(latexContent, { displayMode: false, throwOnError: false });
+        } catch {
+          return part;
+        }
+      }
+      return part.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }).join("");
+    return html;
+  };
+
   const generatePDFViaHTML = async () => {
     // Build hidden container
     const totalMarks = selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0);
@@ -347,12 +374,13 @@ const StudentPortal = () => {
           const subs = sec.subsections.filter(sub => sub.questions.length > 0).map(sub => {
             const items = sub.questions.map(q => {
               const qText = q.text || '[No question text]';
+              const qHtml = latexToHtml(qText);
               const marks = Number.isFinite(q.marks) ? q.marks : '-';
               return `
                 <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
                   <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
                     <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
-                    <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qText}</div>
+                    <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}</div>
                     <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
                   </div>
                 </div>`;
@@ -383,12 +411,13 @@ const StudentPortal = () => {
         const title = `Section ${String.fromCharCode('A'.charCodeAt(0) + idx)}: ${sec.key}`;
         const items = sec.items.map(q => {
           const qText = q.question || (q as any).text || (q as any).content || '[No question text]';
+          const qHtml = latexToHtml(qText);
           const marks = Number.isFinite(q.marks) ? q.marks : '-';
           const html = `
             <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
               <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
                 <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
-                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qText}</div>
+                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}</div>
                 <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
               </div>
             </div>`;
@@ -435,7 +464,7 @@ const StudentPortal = () => {
           <div>Total Marks: ${totalMarks}</div>
         </div>
         <div style="margin-top:10px; height:1px; background:#222;"></div>
-        ${examInstructions ? `<div style=\"margin-top:12px; font-size:12px; border:1px solid #ddd; padding:10px; border-radius:6px; background:#fafafa;\"><strong>Instructions:</strong> ${examInstructions}</div>` : ''}
+        ${examInstructions ? `<div style=\"margin-top:12px; font-size:12px; border:1px solid #ddd; padding:10px; border-radius:6px; background:#fafafa;\"><strong>Instructions:</strong> ${latexToHtml(examInstructions)}</div>` : ''}
         ${marksGroups.length ? `<div style=\"margin-top:10px; font-size:12px;\"><strong>Marks Distribution:</strong><div style=\"margin-top:6px;\">${marksChips}</div></div>` : ''}
         ${makeSectionHTML()}
       </div>
@@ -833,7 +862,8 @@ const StudentPortal = () => {
       ...selectedQuestions.map(q => q.question || (q as any).text || (q as any).content || '')
     ].join(' ');
 
-    if (containsComplexScript(fullText)) {
+    const hasLatex = /(\$\$[^$]+\$\$|\$[^$]+\$)/.test(fullText);
+    if (containsComplexScript(fullText) || hasLatex) {
       await generatePDFViaHTML();
       return;
     }
@@ -2479,7 +2509,7 @@ const StudentPortal = () => {
                             htmlFor={`question-${question.id}`}
                             className="text-base font-medium cursor-pointer"
                           >
-                            {question.question || question.text || question.content || '[No question text]'}
+                            <LatexPreview content={question.question || question.text || question.content || '[No question text]'} />
                           </Label>
                           <div className="text-sm text-muted-foreground mt-1">
                             {question.marks} marks • {question.difficulty} • {question.type}
@@ -2636,6 +2666,12 @@ const StudentPortal = () => {
                                                 }}
                                                 className="w-full min-h-[60px] sm:min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-xs sm:text-sm resize-none"
                                               />
+                                              <div className="mt-2 p-2 border rounded bg-muted/30">
+                                                <Label className="text-[10px] sm:text-xs text-muted-foreground">Preview</Label>
+                                                <div className="text-xs sm:text-sm">
+                                                  <LatexPreview content={q.text || ''} />
+                                                </div>
+                                              </div>
                                             </div>
                                             <div>
                                               <Label className="text-xs sm:text-sm">Marks</Label>
@@ -2697,6 +2733,12 @@ const StudentPortal = () => {
                                           }}
                                           className="w-full min-h-[60px] sm:min-h-[72px] rounded-md border border-input bg-background px-3 py-2 text-xs sm:text-sm resize-none"
                                         />
+                                        <div className="mt-2 p-2 border rounded bg-muted/30">
+                                          <Label className="text-[10px] sm:text-xs text-muted-foreground">Preview</Label>
+                                          <div className="text-xs sm:text-sm">
+                                            <LatexPreview content={question.question || (question as any).text || (question as any).content || ''} />
+                                          </div>
+                                        </div>
                                       </div>
                                       <div>
                                         <Label className="text-xs sm:text-sm">Marks</Label>
@@ -2771,9 +2813,9 @@ const StudentPortal = () => {
                   {selectedQuestions.map((question, index) => (
                     <div key={question.id} className="border-b pb-4">
                       <div className="flex justify-between items-start mb-2">
-                        <h3 className="text-lg font-semibold">
-                          Q{index + 1}. {getQuestionText(question) || '[No question text]'}
-                          Q{index + 1}. {getQuestionText(question) || '[No question text]'}
+                        <h3 className="text-lg font-semibold flex gap-2">
+                          <span>Q{index + 1}.</span>
+                          <LatexPreview content={getQuestionText(question) || '[No question text]'} />
                         </h3>
                         <div className="text-sm text-muted-foreground">
                           {question.marks} marks • {question.difficulty} • {question.chapter}

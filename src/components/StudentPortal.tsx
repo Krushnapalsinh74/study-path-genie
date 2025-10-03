@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useDarkMode } from "@/contexts/DarkModeContext";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
@@ -59,6 +60,7 @@ interface Chapter {
 }
 
 const StudentPortal = () => {
+  const { isDarkMode } = useDarkMode();
   const [currentStep, setCurrentStep] = useState("login");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -1668,12 +1670,8 @@ const StudentPortal = () => {
 
   if (currentStep === "subjects") {
     return (
-      <div className="min-h-screen bg-white p-4">
+      <div className="min-h-screen bg-white dark:bg-gray-900 p-4">
         <div className="max-w-md mx-auto">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-xl font-bold text-gray-900">Select Subject</h1>
-          </div>
 
           {/* Dropdown Selectors */}
           <div className="mb-6">
@@ -1681,20 +1679,20 @@ const StudentPortal = () => {
               {/* Board Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 shadow-sm hover:shadow-md group"
+                className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
-                      <GraduationCap className="w-5 h-5 text-white" />
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <GraduationCap className="w-4 h-4 text-white" />
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Board</div>
-                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedBoard?.name || "Select Board"}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1 font-medium">Board</div>
+                      <div className="text-sm font-semibold text-gray-800 dark:text-white truncate">{selectedBoard?.name || "Select Board"}</div>
                     </div>
                   </div>
-                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-blue-100 transition-colors duration-200">
-                    <ChevronRight className="w-3 h-3 text-gray-500" />
+                  <div className="w-5 h-5 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center group-hover:bg-blue-100 dark:group-hover:bg-blue-800 transition-colors duration-200">
+                    <ChevronRight className="w-3 h-3 text-gray-500 dark:text-gray-400" />
                   </div>
                 </div>
               </div>
@@ -1702,20 +1700,20 @@ const StudentPortal = () => {
               {/* Standard Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-green-300 hover:bg-green-50 transition-all duration-200 shadow-sm hover:shadow-md group"
+                className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
-                      <Users className="w-5 h-5 text-white" />
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <Users className="w-4 h-4 text-white" />
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Standard</div>
-                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedStandard?.name || "Select Standard"}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1 font-medium">Standard</div>
+                      <div className="text-sm font-semibold text-gray-800 dark:text-white truncate">{selectedStandard?.name || "Select Standard"}</div>
                     </div>
                   </div>
-                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-green-100 transition-colors duration-200">
-                    <ChevronRight className="w-3 h-3 text-gray-500" />
+                  <div className="w-5 h-5 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-800 transition-colors duration-200">
+                    <ChevronRight className="w-3 h-3 text-gray-500 dark:text-gray-400" />
                   </div>
                 </div>
               </div>

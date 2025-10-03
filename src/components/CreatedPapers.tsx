@@ -147,8 +147,8 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="min-h-screen bg-white p-4">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">

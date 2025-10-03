@@ -5,12 +5,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Menu, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
+import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
-import CreatedPapers from "./CreatedPapers";
 import katex from "katex";
 
 // OTP cooldown (in milliseconds)
@@ -208,25 +207,6 @@ const StudentPortal = () => {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
   
-  // Menu dropdown state
-  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
-
-  // Close menu dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showMenuDropdown) {
-        const target = event.target as HTMLElement;
-        if (!target.closest('.menu-dropdown')) {
-          setShowMenuDropdown(false);
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showMenuDropdown]);
 
   // Function to get subject-specific icon
   const getSubjectIcon = (subjectName: string) => {
@@ -1688,39 +1668,11 @@ const StudentPortal = () => {
 
   if (currentStep === "subjects") {
     return (
-      <div className="min-h-screen bg-white">
-        <div className="max-w-md mx-auto px-4 py-6 border border-gray-200 rounded-3xl">
-          {/* Header with Menu */}
-          <div className="flex items-center justify-between mb-6">
+      <div className="min-h-screen bg-white p-4">
+        <div className="max-w-md mx-auto">
+          {/* Header */}
+          <div className="mb-6">
             <h1 className="text-xl font-bold text-gray-900">Select Subject</h1>
-            <div className="relative menu-dropdown">
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-                onClick={() => setShowMenuDropdown(!showMenuDropdown)}
-              >
-                <Menu className="w-4 h-4" />
-                Menu
-              </Button>
-              
-              {showMenuDropdown && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50 menu-dropdown">
-                  <div className="py-1">
-                    <button
-                      onClick={() => {
-                        setCurrentStep("created-papers");
-                        setShowMenuDropdown(false);
-                      }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                    >
-                      <FileText className="w-4 h-4" />
-                      Created Papers
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
 
           {/* Dropdown Selectors */}
@@ -1929,22 +1881,11 @@ const StudentPortal = () => {
   }
 
 
-  if (currentStep === "created-papers") {
-    return <CreatedPapers onBack={() => {
-      // If board and standard are selected, go back to subjects
-      if (selectedBoard && selectedStandard) {
-        setCurrentStep("subjects");
-      } else {
-        setCurrentStep("subjects");
-      }
-    }} />;
-  }
 
   if (currentStep === "paper-options") {
     return (
       <div className="min-h-screen bg-white p-4">
         <div className="max-w-md mx-auto">
-          <div className="border border-gray-300 rounded-3xl p-6">
             <div className="mb-6">
               <Button
                 onClick={() => setCurrentStep("subjects")}
@@ -2092,7 +2033,6 @@ const StudentPortal = () => {
                 </Alert>
               )}
             </div>
-          </div>
         </div>
       </div>
     );

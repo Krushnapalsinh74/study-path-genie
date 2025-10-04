@@ -1173,40 +1173,6 @@ const StudentPortal = () => {
     }
   };
 
-  // Auto-load boards when reaching subjects page without selection
-  useEffect(() => {
-    if (currentStep === "subjects" && !selectedBoard && !selectedStandard && boards.length === 0) {
-      fetchBoards();
-    }
-  }, [currentStep, selectedBoard, selectedStandard, boards.length]);
-
-  // Also load boards when boards modal is opened directly
-  useEffect(() => {
-    if (currentStep === "boards" && boards.length === 0 && !loadingBoards) {
-      fetchBoards();
-    }
-  }, [currentStep, boards.length, loadingBoards]);
-
-  // Auto-select first board when boards are loaded and no board is selected
-  useEffect(() => {
-    if (currentStep === "subjects" && !selectedBoard && boards.length > 0) {
-      const defaultBoard = boards[0];
-      setSelectedBoard(defaultBoard);
-      fetchStandards(defaultBoard.id);
-    }
-  }, [currentStep, selectedBoard, boards]);
-
-  // Auto-select first standard when standards are loaded and no standard is selected
-  useEffect(() => {
-    if (currentStep === "subjects" && selectedBoard && !selectedStandard) {
-      const boardStandards = standards[selectedBoard.id];
-      if (boardStandards && boardStandards.length > 0) {
-        const defaultStandard = boardStandards[0];
-        setSelectedStandard(defaultStandard);
-      }
-    }
-  }, [currentStep, selectedBoard, selectedStandard, standards]);
-
   // Load subjects when a standard is selected
   useEffect(() => {
     if (selectedStandard?.id && currentStep === "subjects") {

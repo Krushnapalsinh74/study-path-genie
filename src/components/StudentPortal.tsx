@@ -5,12 +5,12 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Menu, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
+import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useDarkMode } from "@/contexts/DarkModeContext";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
-import CreatedPapers from "./CreatedPapers";
 import katex from "katex";
 
 // OTP cooldown (in milliseconds)
@@ -60,6 +60,7 @@ interface Chapter {
 }
 
 const StudentPortal = () => {
+  const { isDarkMode } = useDarkMode();
   const [currentStep, setCurrentStep] = useState("login");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
@@ -127,6 +128,39 @@ const StudentPortal = () => {
       };
       savedPapers.push(newPaper);
       localStorage.setItem('createdPapers', JSON.stringify(savedPapers));
+      
+      // Send paper creation activity to admin panel
+      const currentEmail = localStorage.getItem("spg_logged_in_email");
+      if (currentEmail) {
+        const activityData = {
+          username: currentEmail.split('@')[0],
+          email: currentEmail,
+          firstName: currentEmail.split('@')[0],
+          lastName: "Student",
+          role: "student",
+          status: "active",
+          lastActive: new Date().toISOString(),
+          // Activity data
+          activityType: "paper_created",
+          paperDetails: {
+            title: paperData.title,
+            subject: paperData.subject,
+            board: paperData.board,
+            standard: paperData.standard,
+            type: paperData.type,
+            difficulty: paperData.difficulty,
+            totalQuestions: paperData.totalQuestions,
+            totalMarks: paperData.totalMarks,
+            chapters: paperData.chapters
+          },
+          activityDate: new Date().toISOString(),
+          isNewUser: false
+        };
+        
+        // Send to admin panel asynchronously
+        sendNewUserToAdmin(activityData);
+      }
+      
       toast({
         title: "Paper Saved",
         description: "Your paper has been saved successfully!",
@@ -208,25 +242,6 @@ const StudentPortal = () => {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
   
-  // Menu dropdown state
-  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
-
-  // Close menu dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (showMenuDropdown) {
-        const target = event.target as HTMLElement;
-        if (!target.closest('.menu-dropdown')) {
-          setShowMenuDropdown(false);
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showMenuDropdown]);
 
   // Function to get subject-specific icon
   const getSubjectIcon = (subjectName: string) => {
@@ -1165,6 +1180,13 @@ const StudentPortal = () => {
     }
   }, [currentStep, selectedBoard, selectedStandard, boards.length]);
 
+  // Also load boards when boards modal is opened directly
+  useEffect(() => {
+    if (currentStep === "boards" && boards.length === 0 && !loadingBoards) {
+      fetchBoards();
+    }
+  }, [currentStep, boards.length, loadingBoards]);
+
   // Auto-select first board when boards are loaded and no board is selected
   useEffect(() => {
     if (currentStep === "subjects" && !selectedBoard && boards.length > 0) {
@@ -1274,6 +1296,86 @@ const StudentPortal = () => {
     }
   };
 
+  // Function to check if user is new
+  const isNewUser = (email: string) => {
+    try {
+      const existingEmail = localStorage.getItem("spg_logged_in_email");
+      return !existingEmail || existingEmail !== email;
+    } catch {
+      return true;
+    }
+  };
+
+  // Function to test different data structures
+  const testAdminAPI = async () => {
+    const testData = [
+      // Test 1: Minimal data
+      { email: "test@example.com", role: "student" },
+      // Test 2: Basic user data
+      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student" },
+      // Test 3: Full user data
+      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student", status: "active" },
+      // Test 4: With timestamps
+      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student", status: "active", createdAt: new Date().toISOString() }
+    ];
+
+    for (let i = 0; i < testData.length; i++) {
+      console.log(`🧪 Testing data structure ${i + 1}:`, testData[i]);
+      await sendNewUserToAdmin(testData[i]);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between tests
+    }
+  };
+
+  // Function to send new user details to admin panel
+  const sendNewUserToAdmin = async (userDetails: any) => {
+    try {
+      console.log("🚀 Sending user details to admin panel:", JSON.stringify(userDetails, null, 2));
+      
+      // Try multiple possible endpoints
+      const endpoints = [
+        `${ADMIN_BASE_URL}/api/users`,
+        `${ADMIN_BASE_URL}/api/students`,
+        `${ADMIN_BASE_URL}/api/user-registrations`,
+        `${ADMIN_BASE_URL}/api/analytics/users`
+      ];
+      
+      let success = false;
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`📡 Trying endpoint: ${endpoint}`);
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(userDetails),
+          });
+
+          console.log(`📊 Response from ${endpoint}:`, response.status, response.statusText);
+          
+          if (response.ok) {
+            const responseData = await response.json();
+            console.log(`✅ User details sent successfully to ${endpoint}:`, responseData);
+            success = true;
+            break;
+          } else {
+            const errorText = await response.text();
+            console.error(`❌ Failed to send to ${endpoint}:`, response.status, errorText);
+            console.error(`📋 Request body was:`, JSON.stringify(userDetails, null, 2));
+          }
+        } catch (endpointErr) {
+          console.warn(`💥 Error sending to ${endpoint}:`, endpointErr);
+        }
+      }
+      
+      if (!success) {
+        console.warn("⚠️ Failed to send user details to any admin panel endpoint");
+      }
+    } catch (err) {
+      console.warn("💥 Error sending new user details to admin panel:", err);
+    }
+  };
+
   const verifyOtp = async () => {
     if (!otp || otp.length < 4) {
       setError("Please enter a valid OTP");
@@ -1294,10 +1396,33 @@ const StudentPortal = () => {
 
       if (response.ok) {
         const result = await response.json();
+        
+        // Check if this is a new user
+        const isNew = isNewUser(email);
+        
         // Persist session for future auto-login
         try {
           localStorage.setItem("spg_logged_in_email", email);
         } catch {}
+        
+        // If this is a new user, send their details to admin panel
+        if (isNew) {
+          // Try a simpler data structure first
+          const userDetails = {
+            username: email.split('@')[0],
+            email: email,
+            firstName: email.split('@')[0],
+            lastName: "Student",
+            role: "student",
+            status: "active"
+          };
+          
+          // Send to admin panel asynchronously (don't wait for response)
+          sendNewUserToAdmin(userDetails);
+          
+          console.log("New user detected, details sent to admin panel");
+        }
+        
         // If board/standard already saved, jump to subjects
         try {
           const boardRaw = localStorage.getItem("spg_selected_board");
@@ -1317,7 +1442,7 @@ const StudentPortal = () => {
         setLoading(false);
         toast({
           title: "Login Successful",
-          description: "Welcome to the Student Portal!",
+          description: isNew ? "Welcome to the Student Portal! Your details have been registered." : "Welcome back to the Student Portal!",
         });
         return;
       } else {
@@ -1353,6 +1478,28 @@ const StudentPortal = () => {
     try {
       localStorage.setItem("spg_selected_standard", JSON.stringify(standard));
     } catch {}
+
+    // Send updated user details to admin panel if user is logged in
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      const updatedUserDetails = {
+        username: currentEmail.split('@')[0],
+        email: currentEmail,
+        firstName: currentEmail.split('@')[0],
+        lastName: "Student",
+        role: "student",
+        status: "active",
+        lastActive: new Date().toISOString(),
+        // Profile completion data
+        selectedBoard: selectedBoard,
+        selectedStandard: standard,
+        profileCompletionDate: new Date().toISOString(),
+        isNewUser: false
+      };
+      
+      // Send to admin panel asynchronously
+      sendNewUserToAdmin(updatedUserDetails);
+    }
 
     // Load subjects for this standard
     await loadSubjectsForStandard(standard.id);
@@ -1481,6 +1628,15 @@ const StudentPortal = () => {
                       Send OTP
                     </>
                   )}
+                </Button>
+                
+                {/* Debug Test Button - Remove in production */}
+                <Button
+                  onClick={testAdminAPI}
+                  variant="outline"
+                  className="w-full h-10 text-xs"
+                >
+                  🧪 Test Admin API
                 </Button>
               </div>
             ) : (
@@ -1688,40 +1844,8 @@ const StudentPortal = () => {
 
   if (currentStep === "subjects") {
     return (
-      <div className="min-h-screen bg-white">
-        <div className="max-w-md mx-auto px-4 py-6 border border-gray-200 rounded-3xl">
-          {/* Header with Menu */}
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-xl font-bold text-gray-900">Select Subject</h1>
-            <div className="relative menu-dropdown">
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-                onClick={() => setShowMenuDropdown(!showMenuDropdown)}
-              >
-                <Menu className="w-4 h-4" />
-                Menu
-              </Button>
-              
-              {showMenuDropdown && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50 menu-dropdown">
-                  <div className="py-1">
-                    <button
-                      onClick={() => {
-                        setCurrentStep("created-papers");
-                        setShowMenuDropdown(false);
-                      }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                    >
-                      <FileText className="w-4 h-4" />
-                      Created Papers
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+      <div className="min-h-screen bg-white dark:bg-gray-900 p-4">
+        <div className="max-w-md mx-auto">
 
           {/* Dropdown Selectors */}
           <div className="mb-6">
@@ -1729,20 +1853,20 @@ const StudentPortal = () => {
               {/* Board Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all duration-200 shadow-sm hover:shadow-md group"
+                className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
-                      <GraduationCap className="w-5 h-5 text-white" />
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <GraduationCap className="w-4 h-4 text-white" />
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Board</div>
-                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedBoard?.name || "Select Board"}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1 font-medium">Board</div>
+                      <div className="text-sm font-semibold text-gray-800 dark:text-white truncate">{selectedBoard?.name || "Select Board"}</div>
                     </div>
                   </div>
-                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-blue-100 transition-colors duration-200">
-                    <ChevronRight className="w-3 h-3 text-gray-500" />
+                  <div className="w-5 h-5 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center group-hover:bg-blue-100 dark:group-hover:bg-blue-800 transition-colors duration-200">
+                    <ChevronRight className="w-3 h-3 text-gray-500 dark:text-gray-400" />
                   </div>
                 </div>
               </div>
@@ -1750,20 +1874,20 @@ const StudentPortal = () => {
               {/* Standard Selector */}
               <div 
                 onClick={() => setCurrentStep("boards")}
-                className="bg-white border-2 border-gray-200 rounded-3xl px-4 py-3 cursor-pointer hover:border-green-300 hover:bg-green-50 transition-all duration-200 shadow-sm hover:shadow-md group"
+                className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
-                      <Users className="w-5 h-5 text-white" />
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform duration-200">
+                      <Users className="w-4 h-4 text-white" />
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 uppercase tracking-wide mb-1 font-medium">Standard</div>
-                      <div className="text-sm font-semibold text-gray-800 truncate">{selectedStandard?.name || "Select Standard"}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1 font-medium">Standard</div>
+                      <div className="text-sm font-semibold text-gray-800 dark:text-white truncate">{selectedStandard?.name || "Select Standard"}</div>
                     </div>
                   </div>
-                  <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center group-hover:bg-green-100 transition-colors duration-200">
-                    <ChevronRight className="w-3 h-3 text-gray-500" />
+                  <div className="w-5 h-5 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-800 transition-colors duration-200">
+                    <ChevronRight className="w-3 h-3 text-gray-500 dark:text-gray-400" />
                   </div>
                 </div>
               </div>
@@ -1929,22 +2053,11 @@ const StudentPortal = () => {
   }
 
 
-  if (currentStep === "created-papers") {
-    return <CreatedPapers onBack={() => {
-      // If board and standard are selected, go back to subjects
-      if (selectedBoard && selectedStandard) {
-        setCurrentStep("subjects");
-      } else {
-        setCurrentStep("subjects");
-      }
-    }} />;
-  }
 
   if (currentStep === "paper-options") {
     return (
       <div className="min-h-screen bg-white p-4">
         <div className="max-w-md mx-auto">
-          <div className="border border-gray-300 rounded-3xl p-6">
             <div className="mb-6">
               <Button
                 onClick={() => setCurrentStep("subjects")}
@@ -2092,7 +2205,6 @@ const StudentPortal = () => {
                 </Alert>
               )}
             </div>
-          </div>
         </div>
       </div>
     );

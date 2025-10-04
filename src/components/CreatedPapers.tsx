@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
+import { useDarkMode } from "@/contexts/DarkModeContext";
 import { 
   FileText, 
   Download, 
@@ -39,6 +40,7 @@ interface CreatedPapersProps {
 }
 
 export default function CreatedPapers({ onBack }: CreatedPapersProps) {
+  const { isDarkMode } = useDarkMode();
   const [papers, setPapers] = useState<CreatedPaper[]>([]);
   const [filteredPapers, setFilteredPapers] = useState<CreatedPaper[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -147,8 +149,8 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="min-h-screen bg-white dark:bg-gray-900 p-4">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">

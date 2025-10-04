@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useDarkMode } from "@/contexts/DarkModeContext";
 import { useModal } from "@/contexts/ModalContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
@@ -111,6 +112,7 @@ const StudentPortal = () => {
   const [isCheckingUser, setIsCheckingUser] = useState(false);
 
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Base URLs for services
   const OTP_BASE_URL = "https://08m8v685-3000.inc1.devtunnels.ms";
@@ -1719,7 +1721,7 @@ const StudentPortal = () => {
     setError("");
 
     try {
-  const response = await fetch(`${OTP_BASE_URL}/verify-otp`, {
+      const response = await fetch(`${OTP_BASE_URL}/verify-otp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1768,6 +1770,26 @@ const StudentPortal = () => {
           if (adminResult) {
             console.log("✅ New user registered in admin panel");
           }
+          
+          // For new users, redirect to admin panel with board ID and standard ID
+          const boardId = selectedBoard?.id || '';
+          const standardId = selectedStandard?.id || '';
+          
+          if (boardId && standardId) {
+            // Create admin panel URL with parameters
+            const adminPanelUrl = `https://08m8v685-3002.inc1.devtunnels.ms/admin?boardId=${boardId}&standardId=${standardId}&userEmail=${encodeURIComponent(email)}&isNewUser=true`;
+            
+            // Redirect to admin panel
+            window.location.href = adminPanelUrl;
+            return;
+          } else {
+            // If no board/standard selected, go to subjects to select them first
+            setCurrentStep("subjects");
+            toast({
+              title: "Registration Successful",
+              description: "Welcome! Please select your board and standard to access the admin panel.",
+            });
+          }
         } else if (userExists === true && userPreviousData) {
           // Existing user - restore their profile data
           console.log("🔄 Restoring user data from admin panel...");
@@ -1786,6 +1808,18 @@ const StudentPortal = () => {
             // Restore created papers to localStorage
             localStorage.setItem('createdPapers', JSON.stringify(userPreviousData.createdPapers));
           }
+          
+          // For returning users with board/standard data, also redirect to admin panel
+          const boardId = userPreviousData.selectedBoard?.id || selectedBoard?.id || '';
+          const standardId = userPreviousData.selectedStandard?.id || selectedStandard?.id || '';
+          
+          if (boardId && standardId) {
+            const adminPanelUrl = `https://08m8v685-3002.inc1.devtunnels.ms/admin?boardId=${boardId}&standardId=${standardId}&userEmail=${encodeURIComponent(email)}&isNewUser=false`;
+            
+            // Open admin panel in new tab for returning users
+            window.open(adminPanelUrl, '_blank');
+          }
+          
           console.log("✅ User profile restored from admin panel");
         }
         
@@ -1808,7 +1842,7 @@ const StudentPortal = () => {
         setLoading(false);
         toast({
           title: "Login Successful",
-          description: isNew ? "Welcome to the Student Portal! Your details have been registered." : "Welcome back to the Student Portal!",
+          description: isNew ? "Welcome to the Student Portal! Redirecting to admin panel..." : "Welcome back to the Student Portal!",
         });
         return;
       } else {
@@ -3479,7 +3513,6 @@ const StudentPortal = () => {
                                   setPickerSubId(sub.id);
                                   setPickerSelected(new Set());
                                   setPickerChapter('');
-                                  setPickerQuestions([]);
                                 }}
                               >
                                 Add from Bank

@@ -8,6 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDarkMode } from "@/contexts/DarkModeContext";
+import { useModal } from "@/contexts/ModalContext";
+import { useAuth } from "@/contexts/AuthContext";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
@@ -60,9 +62,14 @@ interface Chapter {
 }
 
 const StudentPortal = () => {
+  console.log("StudentPortal component rendering");
   const { isDarkMode } = useDarkMode();
+  const { setIsModalOpen } = useModal();
+  const { isLoggedIn, setIsLoggedIn, setUserEmail } = useAuth();
   const [currentStep, setCurrentStep] = useState("login");
+  console.log("Current step:", currentStep);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -98,6 +105,10 @@ const StudentPortal = () => {
   const [examDuration, setExamDuration] = useState("2 Hours");
   const [examInstructions, setExamInstructions] = useState("Answer all questions.");
   const [pdfFontReady, setPdfFontReady] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [userExists, setUserExists] = useState<boolean | null>(null);
+  const [userPreviousData, setUserPreviousData] = useState<any>(null);
+  const [isCheckingUser, setIsCheckingUser] = useState(false);
 
   const { toast } = useToast();
 
@@ -129,8 +140,13 @@ const StudentPortal = () => {
       savedPapers.push(newPaper);
       localStorage.setItem('createdPapers', JSON.stringify(savedPapers));
       
-      // Send paper creation activity to admin panel
+      // Save created papers to admin panel
       const currentEmail = localStorage.getItem("spg_logged_in_email");
+      if (currentEmail) {
+        updateUserProfileInAdmin(currentEmail, { createdPapers: savedPapers });
+      }
+      
+      // Send paper creation activity to admin panel
       if (currentEmail) {
         const activityData = {
           username: currentEmail.split('@')[0],
@@ -158,7 +174,7 @@ const StudentPortal = () => {
         };
         
         // Send to admin panel asynchronously
-        sendNewUserToAdmin(activityData);
+        sendUserDataToAdmin(activityData);
       }
       
       toast({
@@ -997,48 +1013,62 @@ const StudentPortal = () => {
 
   // no per-type picking for chapter mode
 
-  // Fetch boards from admin panel
+  // Fetch boards from API
   const fetchBoards = async () => {
     setLoadingBoards(true);
+    setError("");
+    
     try {
+      console.log("🔄 Fetching boards from API...");
       const response = await fetch(`${ADMIN_BASE_URL}/api/boards`);
+      
       if (!response.ok) {
-        throw new Error("Failed to fetch boards");
+        throw new Error(`Failed to fetch boards: ${response.status} ${response.statusText}`);
       }
-      const boardsData = await response.json();
-      setBoards(boardsData);
-    } catch (err) {
-      console.error("Error fetching boards:", err);
-      setError("Failed to load boards. Please try again.");
-      // Fallback to mock data if API fails
+      
+      const data = await response.json();
+      console.log("✅ Boards fetched successfully:", data);
+      setBoards(data);
+      setIsOfflineMode(false);
+    } catch (error) {
+      console.error("❌ Error fetching boards:", error);
+      setError("Failed to load boards. Please check your connection and try again.");
+      
+      // Fallback to sample data if API fails
+      console.log("ℹ️ Falling back to sample data");
       setBoards([
         { id: 1, name: "CBSE", description: "Central Board of Secondary Education" },
         { id: 2, name: "ICSE", description: "Indian Certificate of Secondary Education" },
         { id: 3, name: "State Board", description: "State Board Education" },
         { id: 4, name: "IB", description: "International Baccalaureate" },
       ]);
+      setIsOfflineMode(true);
     } finally {
       setLoadingBoards(false);
     }
   };
 
-  // Fetch standards for selected board
+  // Fetch standards for selected board from API
   const fetchStandards = async (boardId: number) => {
     try {
-      const response = await fetch(
-        `${ADMIN_BASE_URL}/api/boards/${boardId}/standards`
-      );
+      console.log("🔄 Fetching standards from API for board:", boardId);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/boards/${boardId}/standards`);
+      
       if (!response.ok) {
-        throw new Error("Failed to fetch standards");
+        throw new Error(`Failed to fetch standards: ${response.status} ${response.statusText}`);
       }
-      const standardsData = await response.json();
+      
+      const data = await response.json();
+      console.log("✅ Standards fetched successfully:", data);
       setStandards((prev) => ({
         ...prev,
-        [boardId]: standardsData,
+        [boardId]: data,
       }));
-    } catch (err) {
-      console.error("Error fetching standards:", err);
-      // Fallback to mock data if API fails
+    } catch (error) {
+      console.error("❌ Error fetching standards:", error);
+      
+      // Fallback to sample data if API fails
+      console.log("ℹ️ Falling back to sample standards data");
       setStandards((prev) => ({
         ...prev,
         [boardId]: [
@@ -1050,81 +1080,64 @@ const StudentPortal = () => {
     }
   };
 
-  // Fetch subjects for selected standard
+  // Fetch subjects for selected standard from API
   const fetchSubjects = async (standardId: number) => {
     setError("");
+    
     try {
-      console.log("Fetching subjects for standard:", standardId);
-      const response = await fetch(
-        `https://08m8v685-3002.inc1.devtunnels.ms/api/standards/${standardId}/subjects`
-      );
-
-      console.log("Subjects API response status:", response.status);
-
+      console.log("🔄 Fetching subjects from API for standard:", standardId);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/standards/${standardId}/subjects`);
+      
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log("Error response:", errorText);
-        throw new Error(
-          `Failed to fetch subjects: ${response.status} ${response.statusText} - ${errorText}`
-        );
+        throw new Error(`Failed to fetch subjects: ${response.status} ${response.statusText}`);
       }
-
-      const subjectsData = await response.json();
-      console.log("Subjects data from API:", subjectsData);
-      console.log("Number of subjects loaded:", subjectsData.length);
-
-      // Add a test paid subject for demonstration
-      const subjectsWithTest = [
-        ...subjectsData,
+      
+      const data = await response.json();
+      console.log("✅ Subjects fetched successfully:", data);
+      setSubjects((prev) => ({
+        ...prev,
+        [standardId]: data,
+      }));
+    } catch (error) {
+      console.error("❌ Error fetching subjects:", error);
+      setError("Failed to load subjects. Please check your connection and try again.");
+      
+      // Fallback to sample data if API fails
+      console.log("ℹ️ Falling back to sample subjects data");
+      const sampleSubjects = [
+        { id: 1, name: "Mathematics", price: 0 },
+        { id: 2, name: "Physics", price: 0 },
+        { id: 3, name: "Chemistry", price: 0 },
+        { id: 4, name: "Biology", price: 0 },
+        { id: 5, name: "English", price: 0 },
+        { id: 6, name: "Computer Science", price: 0 },
         { id: 999, name: "Premium Mathematics", price: 299 }
       ];
       
       setSubjects((prev) => ({
         ...prev,
-        [standardId]: subjectsWithTest,
-      }));
-    } catch (err) {
-      console.error("Error fetching subjects:", err);
-      setError(`Failed to load subjects from admin panel: ${err}`);
-      setSubjects((prev) => ({
-        ...prev,
-        [standardId]: [],
+        [standardId]: sampleSubjects,
       }));
     }
   };
 
-  // Fetch questions for selected subject
+  // Fetch questions for selected subject from API
   const fetchQuestions = async (subjectId: number, chapterName?: string) => {
     setLoadingQuestions(true);
     setError("");
+    
     try {
-      let url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
-      if (chapterName) {
-        // Find chapter object by name
-        const chapterObj = chapters.find(c => c.name === chapterName);
-        if (chapterObj && chapterObj.id) {
-          url = `${ADMIN_BASE_URL}/api/chapters/${chapterObj.id}/questions`;
-        }
-      }
-      const response = await fetch(url);
-      console.log("Questions API response status:", response.status);
+      console.log("🔄 Fetching questions from API for subject:", subjectId);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`);
+      
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log("Error response:", errorText);
-        throw new Error(
-          `Failed to fetch questions: ${response.status} ${response.statusText} - ${errorText}`
-        );
+        throw new Error(`Failed to fetch questions: ${response.status} ${response.statusText}`);
       }
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON received for questions endpoint. First 200 chars:', text.slice(0, 200));
-        throw new SyntaxError('Questions API returned non-JSON (HTML). The endpoint may be incorrect or the server returned an error page.');
-      }
-      const questionsData = await response.json();
-      console.log("Questions data from API:", questionsData);
-      console.log("Number of questions loaded:", questionsData.length);
-      const normalized = Array.isArray(questionsData) ? questionsData.map(normalizeQuestion) : [];
+      
+      const data = await response.json();
+      console.log("✅ Questions fetched successfully:", data);
+      
+      const normalized = data.map(normalizeQuestion);
       if (chapterName) {
         setChapterQuestions(normalized);
       } else {
@@ -1134,44 +1147,265 @@ const StudentPortal = () => {
         }));
       }
       return normalized as Question[];
-    } catch (err) {
-      console.error("Error fetching questions:", err);
-      const msg = err instanceof SyntaxError ? 'Server returned HTML instead of JSON. Please ensure the API URL is correct and the server is running.' : String(err);
-      setError(`Failed to load questions from admin panel: ${msg}`);
-      setQuestions((prev) => ({
-        ...prev,
-        [subjectId]: [],
-      }));
-      return [] as Question[];
+    } catch (error) {
+      console.error("❌ Error fetching questions:", error);
+      setError("Failed to load questions. Please check your connection and try again.");
+      
+      // Fallback to sample data if API fails
+      console.log("ℹ️ Falling back to sample questions data");
+      const sampleQuestions = [
+        {
+          id: 1,
+          question: "What is the derivative of x²?",
+          type: "Short Answer",
+          difficulty: "Easy",
+          chapter: chapterName || "Calculus",
+          marks: 2,
+          text: "What is the derivative of x²?",
+          content: "What is the derivative of x²?"
+        },
+        {
+          id: 2,
+          question: "Solve the equation: 2x + 5 = 13",
+          type: "Short Answer",
+          difficulty: "Easy",
+          chapter: chapterName || "Algebra",
+          marks: 3,
+          text: "Solve the equation: 2x + 5 = 13",
+          content: "Solve the equation: 2x + 5 = 13"
+        },
+        {
+          id: 3,
+          question: "Explain the concept of photosynthesis.",
+          type: "Long Answer",
+          difficulty: "Medium",
+          chapter: chapterName || "Biology",
+          marks: 5,
+          text: "Explain the concept of photosynthesis.",
+          content: "Explain the concept of photosynthesis."
+        },
+        {
+          id: 4,
+          question: "What is the capital of India?",
+          type: "MCQ",
+          difficulty: "Easy",
+          chapter: chapterName || "General Knowledge",
+          marks: 1,
+          text: "What is the capital of India?",
+          content: "What is the capital of India?"
+        },
+        {
+          id: 5,
+          question: "Calculate the area of a circle with radius 7 cm.",
+          type: "Problem Solving",
+          difficulty: "Medium",
+          chapter: chapterName || "Geometry",
+          marks: 4,
+          text: "Calculate the area of a circle with radius 7 cm.",
+          content: "Calculate the area of a circle with radius 7 cm."
+        }
+      ];
+      
+      const normalized = sampleQuestions.map(normalizeQuestion);
+      if (chapterName) {
+        setChapterQuestions(normalized);
+      } else {
+        setQuestions((prev) => ({
+          ...prev,
+          [subjectId]: normalized,
+        }));
+      }
+      return normalized as Question[];
     } finally {
       setLoadingQuestions(false);
     }
   };
 
-  // Fetch chapters for selected subject
+  // Fetch chapters for selected subject from API
   const fetchChapters = async (subjectId: number) => {
     setLoadingChapters(true);
     setError("");
+    
     try {
-      const response = await fetch(
-        `${ADMIN_BASE_URL}/api/subjects/${subjectId}/chapters`
-      );
-      if (!response.ok) throw new Error("Failed to fetch chapters");
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('Non-JSON received for chapters endpoint. First 200 chars:', text.slice(0, 200));
-        throw new SyntaxError('Chapters API returned non-JSON (HTML).');
+      console.log("🔄 Fetching chapters from API for subject:", subjectId);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/subjects/${subjectId}/chapters`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch chapters: ${response.status} ${response.statusText}`);
       }
+      
       const data = await response.json();
+      console.log("✅ Chapters fetched successfully:", data);
       setChapters(data);
-    } catch (err: any) {
-      const msg = err instanceof SyntaxError ? 'Server returned HTML instead of JSON. Please check the chapters API.' : err.message;
-      setError("Failed to load chapters from admin panel: " + msg);
+    } catch (error) {
+      console.error("❌ Error fetching chapters:", error);
+      setError("Failed to load chapters. Please check your connection and try again.");
+      
+      // Fallback to sample data if API fails
+      console.log("ℹ️ Falling back to sample chapters data");
+      const sampleChapters = [
+        { id: 1, name: "Introduction", subjectId: subjectId },
+        { id: 2, name: "Fundamentals", subjectId: subjectId },
+        { id: 3, name: "Advanced Topics", subjectId: subjectId },
+        { id: 4, name: "Applications", subjectId: subjectId },
+        { id: 5, name: "Practice Problems", subjectId: subjectId }
+      ];
+      
+      setChapters(sampleChapters);
     } finally {
       setLoadingChapters(false);
     }
   };
+
+  // Load boards when component mounts
+  useEffect(() => {
+    fetchBoards();
+  }, []);
+
+  // Check if user is already logged in
+  useEffect(() => {
+    if (isLoggedIn) {
+      // If user is logged in, check if they have saved board/standard preferences
+      try {
+        const boardRaw = localStorage.getItem("spg_selected_board");
+        const standardRaw = localStorage.getItem("spg_selected_standard");
+        if (boardRaw && standardRaw) {
+          const board = JSON.parse(boardRaw);
+          const standard = JSON.parse(standardRaw);
+          setSelectedBoard(board);
+          setSelectedStandard(standard);
+          setCurrentStep("subjects");
+        } else {
+          setCurrentStep("subjects");
+        }
+      } catch {
+        setCurrentStep("subjects");
+      }
+    }
+  }, [isLoggedIn]);
+
+  // Handle modal state for boards step
+  useEffect(() => {
+    if (currentStep === "boards") {
+      setIsModalOpen(true);
+      setShowBoardsPopup(true);
+    } else {
+      setShowBoardsPopup(false);
+    }
+  }, [currentStep, setIsModalOpen]);
+
+  // Handle modal state for standards step
+  useEffect(() => {
+    if (currentStep === "standards") {
+      setIsModalOpen(true);
+      setShowStandardsPopup(true);
+    } else {
+      setShowStandardsPopup(false);
+    }
+  }, [currentStep, setIsModalOpen]);
+
+  // Function to select a board
+  const selectBoard = (board: Board) => {
+    setSelectedBoard(board);
+    setShowBoardsPopup(false);
+    setShowStandardsPopup(true);
+    setCurrentStep("standards");
+    // Load standards for the selected board
+    fetchStandards(board.id);
+    
+    // Save board selection to localStorage
+    localStorage.setItem("spg_selected_board", JSON.stringify(board));
+    
+    // Save board selection to admin panel with board ID
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      updateUserProfileInAdmin(currentEmail, { 
+        selectedBoard: board,
+        boardId: board.id  // Send board ID
+      });
+    }
+  };
+
+  // Function to select a standard
+  const selectStandard = (standard: Standard) => {
+    setSelectedStandard(standard);
+    setShowStandardsPopup(false);
+    setIsModalOpen(false);
+    setCurrentStep("subjects");
+    
+    // Save standard selection to localStorage
+    localStorage.setItem("spg_selected_standard", JSON.stringify(standard));
+    
+    // Save standard selection to admin panel with standard ID
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      updateUserProfileInAdmin(currentEmail, { 
+        selectedStandard: standard,
+        standardId: standard.id  // Send standard ID
+      });
+    }
+  };
+
+  // Function to save user activity to admin panel
+  const saveUserActivity = async (activity: string, details?: any) => {
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (!currentEmail) return;
+    
+    const activityData = {
+      email: currentEmail,
+      activity: activity,
+      details: details || {},
+      timestamp: new Date().toISOString(),
+      deviceInfo: navigator.userAgent,
+      ipAddress: "unknown" // Would need backend to get real IP
+    };
+    
+    try {
+      await fetch(`${ADMIN_BASE_URL}/api/users/activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(activityData),
+      });
+    } catch (error) {
+      console.error("Failed to save user activity:", error);
+    }
+  };
+
+  // Function to logout
+  const logout = async () => {
+    // Save logout activity
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      await saveUserActivity("logout");
+    }
+    
+    setIsLoggedIn(false);
+    setUserEmail(null);
+    setCurrentStep("login");
+    setEmail("");
+    setOtp("");
+    setIsOtpSent(false);
+    setSelectedBoard(null);
+    setSelectedStandard(null);
+    setSelectedSubject(null);
+    setError("");
+  };
+
+  // Function to select a subject
+  const selectSubject = (subject: Subject) => {
+    setSelectedSubject(subject);
+    setCurrentStep("paper-options");
+    
+    // Save subject selection activity
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      saveUserActivity("subject_selected", { subject: subject.name });
+    }
+  };
+
+
 
   // Load subjects when a standard is selected
   useEffect(() => {
@@ -1187,9 +1421,36 @@ const StudentPortal = () => {
     }
   }, [selectedSubject]);
 
+  // Restore board and standard selections from localStorage on mount and when returning from other pages
+  useEffect(() => {
+    try {
+      const savedBoard = localStorage.getItem("spg_selected_board");
+      const savedStandard = localStorage.getItem("spg_selected_standard");
+      
+      if (savedBoard && !selectedBoard) {
+        const board = JSON.parse(savedBoard);
+        setSelectedBoard(board);
+        console.log("✅ Board restored from localStorage:", board);
+      }
+      
+      if (savedStandard && !selectedStandard) {
+        const standard = JSON.parse(savedStandard);
+        setSelectedStandard(standard);
+        console.log("✅ Standard restored from localStorage:", standard);
+      }
+    } catch (error) {
+      console.error("Error restoring selections from localStorage:", error);
+    }
+  }, [currentStep, selectedBoard, selectedStandard]);
+
   const sendOtp = async () => {
     if (!email || !email.includes("@")) {
       setError("Please enter a valid email address");
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setError("Please enter a password (minimum 6 characters)");
       return;
     }
 
@@ -1227,10 +1488,41 @@ const StudentPortal = () => {
     }
 
     setLoading(true);
+    setIsCheckingUser(true);
     setError("");
 
     try {
-  const response = await fetch(`${OTP_BASE_URL}/send-otp`, {
+      // First, check if user exists in admin panel
+      console.log("🔍 DEBUG: Starting user check for email:", email);
+      const userCheck = await checkUserExists(email);
+      console.log("🔍 DEBUG: User check result:", userCheck);
+      
+      setUserExists(userCheck.exists);
+      console.log("🔍 DEBUG: userExists state set to:", userCheck.exists);
+      
+      if (userCheck.exists) {
+        // User exists - use the userData from the check result
+        console.log("👤 Existing user detected, using user data from check result");
+        if (userCheck.userData) {
+          setUserPreviousData(userCheck.userData);
+          console.log("✅ User data loaded from check result:", userCheck.userData);
+        } else {
+          // Fallback: fetch their previous data
+          console.log("🔄 Fetching additional user profile data...");
+          const userProfile = await fetchUserProfileFromAdmin(email);
+          if (userProfile) {
+            setUserPreviousData(userProfile);
+            console.log("✅ Previous user data loaded:", userProfile);
+          }
+        }
+      } else {
+        // User doesn't exist - will create new user after OTP verification
+        console.log("🆕 New user detected");
+        setUserPreviousData(null);
+      }
+
+      // Send OTP regardless of user existence
+      const response = await fetch(`${OTP_BASE_URL}/send-otp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1242,103 +1534,178 @@ const StudentPortal = () => {
         const result = await response.json();
         setIsOtpSent(true);
         setLoading(false);
+        setIsCheckingUser(false);
+        
         // Save OTP timestamp to enforce cooldown
         try {
           const key = `spg_last_otp_ts_${email.trim().toLowerCase()}`;
           localStorage.setItem(key, String(Date.now()));
         } catch {}
+        
+        // Show appropriate message based on user existence
+        const message = userCheck.exists 
+          ? "Welcome back! Please check your email for the verification code."
+          : "Welcome! Please check your email for the verification code.";
+          
         toast({
-          title: "OTP Sent",
-          description: "Please check your email for the verification code.",
+          title: userCheck.exists ? "OTP Sent - Returning User" : "OTP Sent - New User",
+          description: message,
         });
         return;
       } else {
         setError("Could not connect to OTP service. Please check if the server is running and accessible.");
         setLoading(false);
+        setIsCheckingUser(false);
       }
     } catch (err) {
       setError("Could not connect to OTP service. Please check if the server is running and accessible.");
       setLoading(false);
+      setIsCheckingUser(false);
     }
   };
 
-  // Function to check if user is new
+  // Function to check if user is new (based on admin panel, not localStorage)
   const isNewUser = (email: string) => {
+    // This should be based on userExists from admin panel, not localStorage
+    return userExists === false;
+  };
+
+
+  // Function to send user data to admin panel
+  const sendUserDataToAdmin = async (userData: any) => {
     try {
-      const existingEmail = localStorage.getItem("spg_logged_in_email");
-      return !existingEmail || existingEmail !== email;
-    } catch {
-      return true;
+      console.log("🔄 Sending user data to admin panel:", userData);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ User data sent successfully:", result);
+        return result;
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to send user data:", response.status, response.statusText);
+        console.error("❌ Error details:", errorText);
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error sending user data:", error);
+      return null;
     }
   };
 
-  // Function to test different data structures
-  const testAdminAPI = async () => {
-    const testData = [
-      // Test 1: Minimal data
-      { email: "test@example.com", role: "student" },
-      // Test 2: Basic user data
-      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student" },
-      // Test 3: Full user data
-      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student", status: "active" },
-      // Test 4: With timestamps
-      { username: "testuser", email: "test@example.com", firstName: "Test", lastName: "User", role: "student", status: "active", createdAt: new Date().toISOString() }
-    ];
-
-    for (let i = 0; i < testData.length; i++) {
-      console.log(`🧪 Testing data structure ${i + 1}:`, testData[i]);
-      await sendNewUserToAdmin(testData[i]);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second between tests
+  // Test function to create a user
+  const testCreateUser = async () => {
+    const randomId = Math.floor(Math.random() * 10000);
+    const testUser = {
+      username: `testuser${randomId}`,
+      password: `testpass${randomId}`,
+      email: `testuser${randomId}@example.com`,
+      firstName: "Test",
+      lastName: "User",
+      role: "student",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString()
+    };
+    
+    console.log("🧪 Testing user creation with:", testUser);
+    const result = await sendUserDataToAdmin(testUser);
+    
+    if (result) {
+      toast({
+        title: "✅ User Created!",
+        description: `User ${testUser.email} created successfully!`,
+      });
+    } else {
+      toast({
+        title: "❌ Creation Failed",
+        description: "Failed to create user. Check console for details.",
+        variant: "destructive"
+      });
     }
   };
 
-  // Function to send new user details to admin panel
-  const sendNewUserToAdmin = async (userDetails: any) => {
-    try {
-      console.log("🚀 Sending user details to admin panel:", JSON.stringify(userDetails, null, 2));
-      
-      // Try multiple possible endpoints
-      const endpoints = [
-        `${ADMIN_BASE_URL}/api/users`,
-        `${ADMIN_BASE_URL}/api/students`,
-        `${ADMIN_BASE_URL}/api/user-registrations`,
-        `${ADMIN_BASE_URL}/api/analytics/users`
-      ];
-      
-      let success = false;
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`📡 Trying endpoint: ${endpoint}`);
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(userDetails),
-          });
 
-          console.log(`📊 Response from ${endpoint}:`, response.status, response.statusText);
-          
-          if (response.ok) {
-            const responseData = await response.json();
-            console.log(`✅ User details sent successfully to ${endpoint}:`, responseData);
-            success = true;
-            break;
-          } else {
-            const errorText = await response.text();
-            console.error(`❌ Failed to send to ${endpoint}:`, response.status, errorText);
-            console.error(`📋 Request body was:`, JSON.stringify(userDetails, null, 2));
-          }
-        } catch (endpointErr) {
-          console.warn(`💥 Error sending to ${endpoint}:`, endpointErr);
+  // Function to update user profile data in admin panel
+  const updateUserProfileInAdmin = async (email: string, profileData: any) => {
+    try {
+      console.log("🔄 Updating user profile in admin panel:", email, profileData);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users/profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, ...profileData }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ User profile updated successfully:", result);
+        return result;
+      } else {
+        console.error("❌ Failed to update user profile:", response.status, response.statusText);
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error updating user profile:", error);
+      return null;
+    }
+  };
+
+  // Function to check if user exists in admin panel
+  const checkUserExists = async (email: string) => {
+    try {
+      console.log("🔄 Checking if user exists:", email);
+      
+      // Always use the users list approach since it's more reliable
+      const usersResponse = await fetch(`${ADMIN_BASE_URL}/api/users`);
+      if (usersResponse.ok) {
+        const users = await usersResponse.json();
+        console.log("📋 All users in admin panel:", users);
+        
+        const userExists = users.some((user: any) => user.email === email);
+        console.log(`✅ User ${email} exists in admin panel:`, userExists);
+        
+        if (userExists) {
+          const userData = users.find((user: any) => user.email === email);
+          console.log("👤 Found user data:", userData);
+          return { exists: true, userData };
         }
+        
+        return { exists: false };
+      } else {
+        console.error("❌ Failed to fetch users list:", usersResponse.status, usersResponse.statusText);
+        return { exists: false };
       }
-      
-      if (!success) {
-        console.warn("⚠️ Failed to send user details to any admin panel endpoint");
+    } catch (error) {
+      console.error("❌ Error checking user:", error);
+      return { exists: false };
+    }
+  };
+
+  // Function to fetch user profile data from admin panel
+  const fetchUserProfileFromAdmin = async (email: string) => {
+    try {
+      console.log("🔄 Fetching user profile from admin panel:", email);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users/profile?email=${encodeURIComponent(email)}`);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ User profile fetched successfully:", result);
+        return result;
+      } else {
+        console.error("❌ Failed to fetch user profile:", response.status, response.statusText);
+        return null;
       }
-    } catch (err) {
-      console.warn("💥 Error sending new user details to admin panel:", err);
+    } catch (error) {
+      console.error("❌ Error fetching user profile:", error);
+      return null;
     }
   };
 
@@ -1371,22 +1738,55 @@ const StudentPortal = () => {
           localStorage.setItem("spg_logged_in_email", email);
         } catch {}
         
-        // If this is a new user, send their details to admin panel
-        if (isNew) {
-          // Try a simpler data structure first
+        // Update auth context
+        setUserEmail(email);
+        setIsLoggedIn(true);
+        
+        // Save login activity
+        await saveUserActivity("login", { 
+          isNewUser: isNew,
+          loginTime: new Date().toISOString()
+        });
+        
+        // Handle user data based on whether they're new or existing
+        if (userExists === false) {
+          // New user - send complete registration data to admin panel
           const userDetails = {
             username: email.split('@')[0],
+            password: password, // Use actual password from form
             email: email,
             firstName: email.split('@')[0],
             lastName: "Student",
             role: "student",
-            status: "active"
+            status: "active",
+            createdAt: new Date().toISOString(),
+            lastActive: new Date().toISOString()
           };
           
-          // Send to admin panel asynchronously (don't wait for response)
-          sendNewUserToAdmin(userDetails);
+          // Send new user data to admin panel
+          const adminResult = await sendUserDataToAdmin(userDetails);
+          if (adminResult) {
+            console.log("✅ New user registered in admin panel");
+          }
+        } else if (userExists === true && userPreviousData) {
+          // Existing user - restore their profile data
+          console.log("🔄 Restoring user data from admin panel...");
           
-          console.log("New user detected, details sent to admin panel");
+          if (userPreviousData.selectedBoard) {
+            setSelectedBoard(userPreviousData.selectedBoard);
+            // Save to localStorage for persistence
+            localStorage.setItem("spg_selected_board", JSON.stringify(userPreviousData.selectedBoard));
+          }
+          if (userPreviousData.selectedStandard) {
+            setSelectedStandard(userPreviousData.selectedStandard);
+            // Save to localStorage for persistence
+            localStorage.setItem("spg_selected_standard", JSON.stringify(userPreviousData.selectedStandard));
+          }
+          if (userPreviousData.createdPapers) {
+            // Restore created papers to localStorage
+            localStorage.setItem('createdPapers', JSON.stringify(userPreviousData.createdPapers));
+          }
+          console.log("✅ User profile restored from admin panel");
         }
         
         // If board/standard already saved, jump to subjects
@@ -1421,61 +1821,6 @@ const StudentPortal = () => {
     }
   };
 
-  const selectBoard = async (board: Board) => {
-    setSelectedBoard(board);
-    setShowBoardsPopup(false);
-    // persist selected board
-    try {
-      localStorage.setItem("spg_selected_board", JSON.stringify(board));
-    } catch {}
-
-    // Fetch standards for this board if not already loaded
-    if (!standards[board.id]) {
-      await fetchStandards(board.id);
-    }
-
-    setShowStandardsPopup(true);
-  };
-
-  const selectStandard = async (standard: Standard) => {
-    setSelectedStandard(standard);
-    setShowStandardsPopup(false);
-    // persist selected standard
-    try {
-      localStorage.setItem("spg_selected_standard", JSON.stringify(standard));
-    } catch {}
-
-    // Send updated user details to admin panel if user is logged in
-    const currentEmail = localStorage.getItem("spg_logged_in_email");
-    if (currentEmail) {
-      const updatedUserDetails = {
-        username: currentEmail.split('@')[0],
-        email: currentEmail,
-        firstName: currentEmail.split('@')[0],
-        lastName: "Student",
-        role: "student",
-        status: "active",
-        lastActive: new Date().toISOString(),
-        // Profile completion data
-        selectedBoard: selectedBoard,
-        selectedStandard: standard,
-        profileCompletionDate: new Date().toISOString(),
-        isNewUser: false
-      };
-      
-      // Send to admin panel asynchronously
-      sendNewUserToAdmin(updatedUserDetails);
-    }
-
-    // Load subjects for this standard
-    await loadSubjectsForStandard(standard.id);
-
-    setCurrentStep("subjects");
-  };
-
-  const selectSubject = async (subject: Subject) => {
-    handleSubjectSelection(subject);
-  };
 
   // Helper: generate random paper for current subject
   const createRandomPaper = async () => {
@@ -1541,11 +1886,12 @@ const StudentPortal = () => {
   };
 
   if (currentStep === "login") {
+    console.log("Rendering login step");
     return (
-      <div className="min-h-screen bg-gradient-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md shadow-card animate-fade-in">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md shadow-lg animate-fade-in">
           <CardHeader className="text-center">
-            <div className="w-16 h-16 bg-gradient-primary rounded-full flex items-center justify-center mx-auto mb-4">
+            <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
               <GraduationCap className="w-8 h-8 text-white" />
             </div>
             <CardTitle className="text-3xl font-bold text-foreground">
@@ -1554,6 +1900,13 @@ const StudentPortal = () => {
             <CardDescription>
               Login to access your academic resources
             </CardDescription>
+            {isOfflineMode && (
+              <Alert className="mt-4">
+                <AlertDescription className="text-sm">
+                  📱 Running in offline mode - using sample data
+                </AlertDescription>
+              </Alert>
+            )}
           </CardHeader>
           
           <CardContent className="space-y-6">
@@ -1571,6 +1924,18 @@ const StudentPortal = () => {
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password (min 6 characters)"
+                    className="h-12"
+                  />
+                </div>
+
                 {error && (
                   <Alert variant="destructive">
                     <AlertDescription>{error}</AlertDescription>
@@ -1579,14 +1944,14 @@ const StudentPortal = () => {
 
                 <Button
                   onClick={sendOtp}
-                  disabled={loading}
+                  disabled={loading || isCheckingUser}
                   variant="academic"
                   className="w-full h-12"
                 >
-                  {loading ? (
+                  {loading || isCheckingUser ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Sending OTP...
+                      {isCheckingUser ? "Checking account..." : "Sending OTP..."}
                     </>
                   ) : (
                     <>
@@ -1596,13 +1961,13 @@ const StudentPortal = () => {
                   )}
                 </Button>
                 
-                {/* Debug Test Button - Remove in production */}
+                {/* Test button for user creation */}
                 <Button
-                  onClick={testAdminAPI}
+                  onClick={testCreateUser}
                   variant="outline"
                   className="w-full h-10 text-xs"
                 >
-                  🧪 Test Admin API
+                  🧪 Test Create User
                 </Button>
               </div>
             ) : (
@@ -1615,7 +1980,53 @@ const StudentPortal = () => {
                     We've sent a verification code to
                     <br />
                     <span className="font-medium text-foreground">{email}</span>
+                    <br />
+                    <span className="text-xs text-muted-foreground">Password: ••••••••</span>
                   </p>
+                  
+                  {/* Debug info */}
+                  <div className="mt-2 p-2 bg-gray-100 text-xs text-gray-600 rounded">
+                    DEBUG: userExists = {String(userExists)}, userPreviousData = {userPreviousData ? 'exists' : 'null'}
+                  </div>
+                  
+                  {/* Show previous user data if exists */}
+                  {userExists === true && userPreviousData && (
+                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs">✓</span>
+                        </div>
+                        <span className="text-sm font-medium text-green-800">Welcome back!</span>
+                      </div>
+                      <div className="text-xs text-green-700 space-y-1">
+                        {userPreviousData.selectedBoard && (
+                          <div>📚 Board: {userPreviousData.selectedBoard.name}</div>
+                        )}
+                        {userPreviousData.selectedStandard && (
+                          <div>🎓 Standard: {userPreviousData.selectedStandard.name}</div>
+                        )}
+                        {userPreviousData.createdPapers && userPreviousData.createdPapers.length > 0 && (
+                          <div>📄 Papers: {userPreviousData.createdPapers.length} created</div>
+                        )}
+                        <div className="text-green-600 font-medium">Your data will be restored after verification</div>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Show new user message if not exists */}
+                  {userExists === false && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs">+</span>
+                        </div>
+                        <span className="text-sm font-medium text-blue-800">New User</span>
+                      </div>
+                      <div className="text-xs text-blue-700">
+                        Welcome! We'll set up your account after verification.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -1675,7 +2086,11 @@ const StudentPortal = () => {
           <div className="bg-white rounded-t-2xl shadow-2xl p-6 max-h-[80vh] animate-slide-up relative flex flex-col">
             <button
               className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 z-10"
-              onClick={() => setCurrentStep('login')}
+              onClick={() => {
+                setIsModalOpen(false);
+                setShowBoardsPopup(false);
+                setCurrentStep('subjects');
+              }}
               aria-label="Close"
             >
               <X className="w-6 h-6" />
@@ -1747,7 +2162,10 @@ const StudentPortal = () => {
               <div className="bg-white rounded-t-2xl shadow-2xl p-6 max-h-[80vh] animate-slide-up relative flex flex-col">
                 <button
                   className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 z-10"
-                  onClick={() => setShowStandardsPopup(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setShowStandardsPopup(false);
+                  }}
                   aria-label="Close"
                 >
                   <X className="w-6 h-6" />
@@ -1808,6 +2226,76 @@ const StudentPortal = () => {
     );
   }
 
+  if (currentStep === "standards") {
+    return (
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30">
+        <div className="w-full max-w-xl mx-auto">
+          <div className="bg-white rounded-t-2xl shadow-2xl p-6 max-h-[80vh] animate-slide-up relative flex flex-col">
+            <button
+              className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 z-10"
+              onClick={() => {
+                setIsModalOpen(false);
+                setShowStandardsPopup(false);
+                setCurrentStep('subjects');
+              }}
+              aria-label="Close"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <div className="text-center mb-6">
+              <h1 className="text-xl font-bold text-gray-900 mb-1">Select Standard - {selectedBoard?.name}</h1>
+            </div>
+            {standards[selectedBoard?.id || 0] ? (
+              <>
+                {/* Search Standards */}
+                <div className="mb-4 relative">
+                  <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search standards..."
+                    value={standardQuery}
+                    onChange={(e) => setStandardQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {/* Scrollable standards container */}
+                <div className="flex-1 overflow-y-auto pr-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-4">
+                    {standards[selectedBoard?.id || 0]
+                      .filter((s) => s.name.toLowerCase().includes(standardQuery.trim().toLowerCase()))
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((standard) => (
+                      <Card
+                        key={standard.id}
+                        onClick={() => selectStandard(standard)}
+                        className="cursor-pointer border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 group"
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center group-hover:bg-primary/15 transition-colors flex-shrink-0">
+                              <BookOpen className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h3 className="text-sm font-semibold leading-tight">{standard.name}</h3>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <Loader2 className="w-7 h-7 animate-spin mx-auto text-green-500" />
+                <p className="text-muted-foreground mt-2">Loading standards...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (currentStep === "subjects") {
     return (
       <div className="min-h-screen bg-white dark:bg-gray-900 p-4">
@@ -1818,7 +2306,11 @@ const StudentPortal = () => {
             <div className="space-y-3">
               {/* Board Selector */}
               <div 
-                onClick={() => setCurrentStep("boards")}
+                onClick={() => {
+                  setIsModalOpen(true);
+                  setShowBoardsPopup(true);
+                  setCurrentStep("boards");
+                }}
                 className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">
@@ -1839,7 +2331,15 @@ const StudentPortal = () => {
               
               {/* Standard Selector */}
               <div 
-                onClick={() => setCurrentStep("boards")}
+                onClick={() => {
+                  if (!selectedBoard) {
+                    setError("Please select a board first");
+                    return;
+                  }
+                  setIsModalOpen(true);
+                  setShowStandardsPopup(true);
+                  setCurrentStep("standards");
+                }}
                 className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2 cursor-pointer hover:border-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all duration-200 shadow-sm hover:shadow-md group"
               >
                 <div className="flex items-center justify-between">

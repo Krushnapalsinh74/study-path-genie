@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useDarkMode } from "@/contexts/DarkModeContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { 
   User, 
   Mail, 
@@ -11,12 +12,14 @@ import {
   FileText, 
   GraduationCap,
   Award,
-  Clock
+  Clock,
+  LogOut
 } from "lucide-react";
 
 const Profile = () => {
   console.log("Profile component is rendering");
   const { isDarkMode } = useDarkMode();
+  const { setIsLoggedIn, setUserEmail } = useAuth();
   const [userStats, setUserStats] = useState({
     totalPapers: 0,
     totalQuestions: 0,
@@ -54,6 +57,44 @@ const Profile = () => {
     if (hour < 12) return "Good Morning";
     if (hour < 17) return "Good Afternoon";
     return "Good Evening";
+  };
+
+  // Logout function
+  const logout = async () => {
+    // Save logout activity to admin panel
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    if (currentEmail) {
+      try {
+        await fetch("https://08m8v685-3002.inc1.devtunnels.ms/api/users/activity", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: currentEmail,
+            activity: "logout",
+            details: {},
+            timestamp: new Date().toISOString(),
+            deviceInfo: navigator.userAgent,
+            ipAddress: "unknown"
+          }),
+        });
+      } catch (error) {
+        console.error("Failed to save logout activity:", error);
+      }
+    }
+    
+    // Clear auth state
+    setIsLoggedIn(false);
+    setUserEmail(null);
+    
+    // Clear localStorage
+    localStorage.removeItem("spg_logged_in_email");
+    localStorage.removeItem("spg_selected_board");
+    localStorage.removeItem("spg_selected_standard");
+    
+    // Redirect to home page
+    window.location.href = "/#/";
   };
 
   const userEmail = localStorage.getItem('spg_logged_in_email') || 'user@example.com';
@@ -164,6 +205,14 @@ const Profile = () => {
             >
               <FileText className="w-4 h-4 mr-2" />
               View All Papers
+            </Button>
+            <Button 
+              className="w-full justify-start" 
+              variant="destructive"
+              onClick={logout}
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Logout
             </Button>
           </CardContent>
         </Card>

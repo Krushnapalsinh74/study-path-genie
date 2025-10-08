@@ -1,6 +1,6 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { Home, FileText, User } from "lucide-react";
+import { Home, FileText, User, ShoppingBag } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useDarkMode } from "@/contexts/DarkModeContext";
 
@@ -35,6 +35,14 @@ export default function NavigationBar() {
             >
               <FileText className="w-5 h-5" />
               <span className="text-xs font-medium">Papers</span>
+            </Button>
+            <Button
+              variant={isActive("/purchases") ? "default" : "ghost"}
+              onClick={() => navigate("/purchases")}
+              className="flex flex-col items-center gap-1 px-4 py-2 h-auto min-w-0 flex-1 rounded-2xl"
+            >
+              <ShoppingBag className="w-5 h-5" />
+              <span className="text-xs font-medium">My Purchases</span>
             </Button>
             <Button
               variant={isActive("/profile") ? "default" : "ghost"}

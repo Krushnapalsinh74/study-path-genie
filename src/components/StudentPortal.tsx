@@ -14,6 +14,9 @@ import { useNavigate } from "react-router-dom";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
 import LatexPreview from "./LatexPreview";
+import ChapterPaper from "./ChapterPaper";
+import DifficultyPaper from "./DifficultyPaper";
+import RandomPaper from "./RandomPaper";
 import katex from "katex";
 
 // OTP cooldown (in milliseconds)
@@ -98,6 +101,7 @@ const StudentPortal = () => {
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
   const [selectedChapterNames, setSelectedChapterNames] = useState<string[]>([]);
+  const [showChapterPaper, setShowChapterPaper] = useState(false);
   const [multiChapterLoading, setMultiChapterLoading] = useState(false);
 
   // Editable paper header fields
@@ -698,6 +702,10 @@ const StudentPortal = () => {
   }, []);
 
   // Payment functions
+  // Prefer environment configuration, but fall back to existing defaults
+  const apiBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'https://08m8v685-3002.inc1.devtunnels.ms';
+  const razorpayKey = (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || 'rzp_test_1DP5mmOlF5G5ag';
+  const paymentsMode = (import.meta as any).env?.VITE_PAYMENTS_MODE || 'auto'; // 'auto' | 'client' | 'server'
   const initiatePayment = async (subject: Subject) => {
     if (!razorpayLoaded) {
       toast({ title: "Payment Error", description: "Payment system is not ready. Please try again." });
@@ -707,58 +715,54 @@ const StudentPortal = () => {
     setPaymentLoading(true);
     try {
       console.log('Creating payment order for:', subject);
-      
-      // Create order on your backend
-      const orderResponse = await fetch('https://08m8v685-3002.inc1.devtunnels.ms/api/create-order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: (subject.price || 0) * 100, // Convert to paise
-          currency: 'INR',
-          subjectId: subject.id,
-          subjectName: subject.name,
-          userEmail: email,
-        }),
-      });
 
-      console.log('Order response status:', orderResponse.status);
-      console.log('Order response headers:', Object.fromEntries(orderResponse.headers.entries()));
+      let orderData: any = null;
 
-      if (!orderResponse.ok) {
-        const errorText = await orderResponse.text();
-        console.error('Order creation failed:', errorText);
-        throw new Error(`Failed to create payment order: ${orderResponse.status} - ${errorText}`);
+      if (paymentsMode !== 'client') {
+        // Attempt server order creation when not forced client mode
+        try {
+          const orderResponse = await fetch(`${apiBaseUrl}/api/create-order`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              amount: (subject.price || 0) * 100, // Convert to paise
+              currency: 'INR',
+              subjectId: subject.id,
+              subjectName: subject.name,
+              userEmail: email,
+            }),
+          });
+
+          console.log('Order response status:', orderResponse.status);
+
+          if (orderResponse.ok && orderResponse.headers.get('content-type')?.includes('application/json')) {
+            orderData = await orderResponse.json();
+            console.log('Order data received:', orderData);
+          } else {
+            // Non-JSON or non-OK: fall back to client mode silently
+            console.warn('Backend order creation unavailable or returned non-JSON. Falling back to client checkout.');
+          }
+        } catch (serverErr) {
+          console.warn('Order creation request failed. Falling back to client checkout.', serverErr);
+        }
       }
 
-      // Check if response is JSON
-      const contentType = orderResponse.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const responseText = await orderResponse.text();
-        console.error('Non-JSON response received:', responseText);
-        throw new Error('Server returned HTML instead of JSON. API endpoint may not exist.');
-      }
-
-      const orderData = await orderResponse.json();
-      console.log('Order data received:', orderData);
-
-      // For now, let's use a test Razorpay key and create a simple order
-      const options = {
-        key: 'rzp_test_1DP5mmOlF5G5ag', // Test Razorpay key - replace with your actual key
+      // Build Razorpay checkout options. Only include order_id when provided by backend
+      const options: any = {
+        key: razorpayKey,
         amount: (subject.price || 0) * 100, // Convert to paise
         currency: 'INR',
         name: 'Study Path Genie',
         description: `Payment for ${subject.name}`,
-        order_id: orderData.id || `order_${Date.now()}`, // Use order ID from backend or create one
-        // Add receipt for testing
-        receipt: `receipt_${subject.id}_${Date.now()}`,
+        retry: { enabled: false },
         handler: async function (response: any) {
           console.log('Payment successful:', response);
           
           try {
             // Verify payment on your backend
-            const verifyResponse = await fetch('https://08m8v685-3002.inc1.devtunnels.ms/api/verify-payment', {
+            const verifyResponse = await fetch(`${apiBaseUrl}/api/verify-payment`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -774,6 +778,13 @@ const StudentPortal = () => {
 
             if (verifyResponse.ok) {
               toast({ title: "Payment Successful", description: `Access granted to ${subject.name}` });
+              // Persist purchase
+              try {
+                const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
+                const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
+                const updated = already ? existing : [...existing, { id: subject.id, name: subject.name, price: subject.price }];
+                localStorage.setItem('spg_purchases', JSON.stringify(updated));
+              } catch {}
               setShowPaymentModal(false);
               // Proceed to subject selection
               setSelectedSubject(subject);
@@ -802,15 +813,27 @@ const StudentPortal = () => {
         }
       };
 
+      if (orderData?.id) {
+        options.order_id = orderData.id; // only attach when backend returned a valid order
+      }
+
       console.log('Opening Razorpay with options:', options);
       const razorpay = new window.Razorpay(options);
+      // Handle failures explicitly to avoid unhandled console noise
+      try {
+        razorpay.on && razorpay.on('payment.failed', function (response: any) {
+          console.error('Payment failed:', response?.error || response);
+          toast({ title: "Payment Failed", description: response?.error?.description || 'Payment was not completed.' });
+          setPaymentLoading(false);
+        });
+      } catch {}
       razorpay.open();
       
     } catch (error) {
       console.error('Payment error:', error);
       
       // If API fails, offer fallback payment option
-      if (error instanceof Error && error.message.includes('API endpoint may not exist')) {
+      if (paymentsMode === 'client' || (error instanceof Error && error.message.includes('API endpoint may not exist'))) {
         toast({ 
           title: "API Not Available", 
           description: "Backend API is not available. Using test payment mode.",
@@ -819,17 +842,23 @@ const StudentPortal = () => {
         
         // Fallback: Create payment without backend API
         try {
-          const options = {
-            key: 'rzp_test_1DP5mmOlF5G5ag', // Test Razorpay key
+          const options: any = {
+            key: razorpayKey,
             amount: (subject.price || 0) * 100,
             currency: 'INR',
             name: 'Study Path Genie',
             description: `Payment for ${subject.name}`,
-            order_id: `order_${Date.now()}`,
-            receipt: `receipt_${subject.id}_${Date.now()}`,
+            retry: { enabled: false },
             handler: function (response: any) {
               console.log('Fallback payment successful:', response);
               toast({ title: "Payment Successful", description: `Access granted to ${subject.name}` });
+              // Persist purchase (test mode)
+              try {
+                const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
+                const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
+                const updated = already ? existing : [...existing, { id: subject.id, name: subject.name, price: subject.price }];
+                localStorage.setItem('spg_purchases', JSON.stringify(updated));
+              } catch {}
               setShowPaymentModal(false);
               setSelectedSubject(subject);
               setCurrentStep("paper-options");
@@ -848,7 +877,15 @@ const StudentPortal = () => {
             }
           };
 
+          // Do not include order_id in fallback mode; checkout can proceed without it for test
           const razorpay = new window.Razorpay(options);
+          try {
+            razorpay.on && razorpay.on('payment.failed', function (response: any) {
+              console.error('Payment failed:', response?.error || response);
+              toast({ title: "Payment Failed", description: response?.error?.description || 'Payment was not completed.' });
+              setPaymentLoading(false);
+            });
+          } catch {}
           razorpay.open();
           return; // Exit early to avoid setting loading to false
         } catch (fallbackError) {
@@ -865,6 +902,17 @@ const StudentPortal = () => {
   };
 
   const handleSubjectSelection = (subject: Subject) => {
+    // If subject is already purchased, bypass payment
+    try {
+      const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
+      const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
+      if (already) {
+        setSelectedSubject(subject);
+        setCurrentStep("paper-options");
+        return;
+      }
+    } catch {}
+
     if (subject.price && subject.price > 0) {
       setPaymentLoading(false); // Reset loading state
       setShowPaymentModal(true);
@@ -1919,6 +1967,19 @@ const StudentPortal = () => {
     return picked;
   };
 
+  // Render ChapterPaper component when chapter mode is selected
+  if (showChapterPaper && paperMode === "chapter") {
+    return (
+      <ChapterPaper
+        subject={selectedSubject?.name || ""}
+        standard={selectedStandard?.name || ""}
+        board={selectedBoard?.name || ""}
+        chapters={chapters}
+        onBack={() => setShowChapterPaper(false)}
+      />
+    );
+  }
+
   if (currentStep === "login") {
     console.log("Rendering login step");
     return (
@@ -2440,11 +2501,16 @@ const StudentPortal = () => {
                       .map((subject, index) => {
                         const subjectObj = typeof subject === "object" ? subject : { name: subject, price: 0 };
                         const isFree = !subjectObj.price || subjectObj.price === 0;
+                        let isPurchased = false;
+                        try {
+                          const purchased = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
+                          isPurchased = Array.isArray(purchased) && purchased.some((it: any) => it?.id === subjectObj.id);
+                        } catch {}
                         
                         return (
                           <div
                             key={index}
-                            onClick={() => selectSubject(subjectObj)}
+                            onClick={() => handleSubjectSelection(subjectObj)}
                             className="cursor-pointer flex flex-col items-center gap-1 p-1 hover:opacity-80 transition-opacity duration-200"
                           >
                             <div className={`w-12 h-12 ${getSubjectColor(subjectObj.name)} rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-shadow duration-200`}>
@@ -2455,13 +2521,11 @@ const StudentPortal = () => {
                                 {subjectObj.name}
                               </h3>
                               {isFree ? (
-                                <span className="text-xs text-green-600 font-medium mt-1 block">
-                                  Free
-                                </span>
+                                <span className="text-xs text-green-600 font-medium mt-1 block">Free</span>
+                              ) : isPurchased ? (
+                                <span className="text-xs text-green-600 font-medium mt-1 block">Unlocked</span>
                               ) : (
-                                <span className="text-xs text-orange-600 font-medium mt-1 block">
-                                  ₹{subjectObj.price}
-                                </span>
+                                <span className="text-xs text-orange-600 font-medium mt-1 block">₹{subjectObj.price}</span>
                               )}
                             </div>
                           </div>
@@ -2612,7 +2676,7 @@ const StudentPortal = () => {
                 <div
                   onClick={() => {
                     setPaperMode("chapter");
-                    setCurrentStep("multi-chapter-selection");
+                    setShowChapterPaper(true);
                   }}
                   className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-purple-300 hover:bg-purple-50 transition-all duration-200 group"
                 >

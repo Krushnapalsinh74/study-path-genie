@@ -11,6 +11,7 @@ import NavigationBar from "@/components/NavigationBar";
 import Home from "./pages/Home";
 import CreatedPapersPage from "./pages/CreatedPapersPage";
 import Profile from "./pages/Profile";
+import Purchases from "./pages/Purchases";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -74,6 +75,7 @@ const AppContent = () => {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/created-papers" element={<CreatedPapersPage />} />
+        <Route path="/purchases" element={<Purchases />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/admin-panel" element={<AdminPanel />} />
         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

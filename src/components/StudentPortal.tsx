@@ -149,7 +149,7 @@ const StudentPortal = () => {
       // Save created papers to admin panel
       const currentEmail = localStorage.getItem("spg_logged_in_email");
       if (currentEmail) {
-        updateUserProfileInAdmin(currentEmail, { createdPapers: savedPapers });
+        updateUserProfileInAdmin(currentEmail, { createdPapers: savedPapers }, selectedBoard, selectedStandard);
       }
       
       // Send paper creation activity to admin panel
@@ -778,13 +778,20 @@ const StudentPortal = () => {
 
             if (verifyResponse.ok) {
               toast({ title: "Payment Successful", description: `Access granted to ${subject.name}` });
-              // Persist purchase
+              // Persist purchase to localStorage
               try {
                 const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
                 const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
                 const updated = already ? existing : [...existing, { id: subject.id, name: subject.name, price: subject.price }];
                 localStorage.setItem('spg_purchases', JSON.stringify(updated));
               } catch {}
+              
+              // Update user's purchased subjects in API (email endpoint)
+              const currentEmail = localStorage.getItem("spg_logged_in_email");
+              if (currentEmail) {
+                postPurchasedSubject(currentEmail, subject.id, subject.name);
+              }
+              
               setShowPaymentModal(false);
               // Proceed to subject selection
               setSelectedSubject(subject);
@@ -852,13 +859,20 @@ const StudentPortal = () => {
             handler: function (response: any) {
               console.log('Fallback payment successful:', response);
               toast({ title: "Payment Successful", description: `Access granted to ${subject.name}` });
-              // Persist purchase (test mode)
+              // Persist purchase to localStorage (test mode)
               try {
                 const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
                 const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
                 const updated = already ? existing : [...existing, { id: subject.id, name: subject.name, price: subject.price }];
                 localStorage.setItem('spg_purchases', JSON.stringify(updated));
               } catch {}
+              
+              // Update user's purchased subjects in API (email endpoint)
+              const currentEmail = localStorage.getItem("spg_logged_in_email");
+              if (currentEmail) {
+                postPurchasedSubject(currentEmail, subject.id, subject.name);
+              }
+              
               setShowPaymentModal(false);
               setSelectedSubject(subject);
               setCurrentStep("paper-options");
@@ -902,16 +916,25 @@ const StudentPortal = () => {
   };
 
   const handleSubjectSelection = (subject: Subject) => {
-    // If subject is already purchased, bypass payment
-    try {
-      const existing = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
-      const already = Array.isArray(existing) && existing.some((it: any) => it?.id === subject.id);
-      if (already) {
+    // If subject is already purchased, bypass payment - ONLY check API, never localStorage
+    const currentEmail = localStorage.getItem("spg_logged_in_email");
+    let isAlreadyPurchased = false;
+    
+    // ONLY check API data, never localStorage
+    if (currentEmail && userPreviousData && userPreviousData.purchasedSubjects) {
+      isAlreadyPurchased = isSubjectPurchased(subject.id, userPreviousData.purchasedSubjects);
+      console.log(`🔍 Subject ${subject.name} (ID: ${subject.id}) - Already purchased check: ${isAlreadyPurchased}`);
+    } else {
+      // If no API data, assume NOT purchased
+      isAlreadyPurchased = false;
+      console.log(`🔍 Subject ${subject.name} (ID: ${subject.id}) - No API data, assuming NOT purchased`);
+    }
+    
+    if (isAlreadyPurchased) {
         setSelectedSubject(subject);
         setCurrentStep("paper-options");
         return;
       }
-    } catch {}
 
     if (subject.price && subject.price > 0) {
       setPaymentLoading(false); // Reset loading state
@@ -1372,7 +1395,7 @@ const StudentPortal = () => {
       updateUserProfileInAdmin(currentEmail, { 
         selectedBoard: board,
         boardId: board.id  // Send board ID
-      });
+      }, board, selectedStandard);
     }
   };
 
@@ -1392,7 +1415,7 @@ const StudentPortal = () => {
       updateUserProfileInAdmin(currentEmail, { 
         selectedStandard: standard,
         standardId: standard.id  // Send standard ID
-      });
+      }, selectedBoard, standard);
     }
   };
 
@@ -1407,7 +1430,14 @@ const StudentPortal = () => {
       details: details || {},
       timestamp: new Date().toISOString(),
       deviceInfo: navigator.userAgent,
-      ipAddress: "unknown" // Would need backend to get real IP
+      ipAddress: "unknown", // Would need backend to get real IP
+      // Include current board and standards data
+      selectedBoard: selectedBoard,
+      selectedStandard: selectedStandard,
+      boardId: selectedBoard?.id || null,
+      standardId: selectedStandard?.id || null,
+      boardName: selectedBoard?.name || null,
+      standardName: selectedStandard?.name || null
     };
     
     try {
@@ -1431,6 +1461,14 @@ const StudentPortal = () => {
       await saveUserActivity("logout");
     }
     
+    // Clear any persisted auth/session and selections
+    try {
+      localStorage.removeItem("spg_logged_in_email");
+      localStorage.removeItem("spg_selected_board");
+      localStorage.removeItem("spg_selected_standard");
+      localStorage.removeItem("spg_purchases");
+    } catch {}
+    
     setIsLoggedIn(false);
     setUserEmail(null);
     setCurrentStep("login");
@@ -1440,7 +1478,13 @@ const StudentPortal = () => {
     setSelectedBoard(null);
     setSelectedStandard(null);
     setSelectedSubject(null);
+    setUserPreviousData(null);
+    setShowPaymentModal(false);
+    setIsModalOpen(false);
     setError("");
+
+    // Optionally ensure top of view
+    try { window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior }); } catch {}
   };
 
   // Function to select a subject
@@ -1492,6 +1536,17 @@ const StudentPortal = () => {
       console.error("Error restoring selections from localStorage:", error);
     }
   }, [currentStep, selectedBoard, selectedStandard]);
+
+  // Force refresh user's purchased subjects when reaching subjects page
+  useEffect(() => {
+    if (currentStep === "subjects") {
+      const currentEmail = localStorage.getItem("spg_logged_in_email");
+      if (currentEmail) {
+        console.log("🔄 User reached subjects page, refreshing purchased subjects...");
+        refreshUserPurchasedSubjects();
+      }
+    }
+  }, [currentStep]);
 
   const sendOtp = async () => {
     if (!email || !email.includes("@")) {
@@ -1622,15 +1677,28 @@ const StudentPortal = () => {
 
 
   // Function to send user data to admin panel
-  const sendUserDataToAdmin = async (userData: any) => {
+  const sendUserDataToAdmin = async (userData: any, boardData?: Board | null, standardData?: Standard | null, purchasedSubjects?: any[]) => {
     try {
-      console.log("🔄 Sending user data to admin panel:", userData);
+      // Send user-provided data with user-selected board and standard IDs
+      const completeUserData = {
+        username: userData.email.split('@')[0], // Use email prefix as username
+        password: userData.password, // User-provided password
+        email: userData.email, // User-provided email
+        firstName: userData.email.split('@')[0], // Use email prefix as firstName
+        lastName: "Student", // Default lastName
+        role: "user", // Use "user" role as in PowerShell example
+        selectedBoardId: boardData?.id || null, // User-selected board ID
+        selectedStandardId: standardData?.id || null, // User-selected standard ID
+        purchasedSubjects: purchasedSubjects || [] // User's purchased subjects or empty array
+      };
+      
+      console.log("🔄 Sending user-provided data with user-selected board/standard and purchased subjects:", completeUserData);
       const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(userData),
+        body: JSON.stringify(completeUserData),
       });
 
       if (response.ok) {
@@ -1649,7 +1717,7 @@ const StudentPortal = () => {
     }
   };
 
-  // Test function to create a user
+  // Test function to create a user with board and standards data
   const testCreateUser = async () => {
     const randomId = Math.floor(Math.random() * 10000);
     const testUser = {
@@ -1664,14 +1732,51 @@ const StudentPortal = () => {
       lastActive: new Date().toISOString()
     };
     
-    console.log("🧪 Testing user creation with:", testUser);
-    const result = await sendUserDataToAdmin(testUser);
+    // Create sample board and standard data for testing
+    const testBoard = {
+      id: 1,
+      name: "CBSE",
+      description: "Central Board of Secondary Education"
+    };
+    
+    const testStandard = {
+      id: 10,
+      name: "Class 10",
+      description: "Tenth Standard"
+    };
+    
+    console.log("🧪 Testing user creation with board and standards:", {
+      user: testUser,
+      board: testBoard,
+      standard: testStandard
+    });
+    
+    // Log the complete data that will be sent
+    const completeUserData = {
+      ...testUser,
+      selectedBoard: testBoard,
+      selectedStandard: testStandard,
+      boardId: testBoard.id,
+      standardId: testStandard.id,
+      boardName: testBoard.name,
+      standardName: testStandard.name
+    };
+    
+    console.log("📤 Complete data being sent to API:", completeUserData);
+    
+    const result = await sendUserDataToAdmin(testUser, testBoard, testStandard);
     
     if (result) {
       toast({
         title: "✅ User Created!",
-        description: `User ${testUser.email} created successfully!`,
+        description: `User ${testUser.email} created successfully with board and standards!`,
       });
+      
+      // Immediately fetch the created user to verify the data
+      setTimeout(async () => {
+        console.log("🔍 Verifying created user data...");
+        await fetchAndDisplayUserData(testUser.email);
+      }, 1000);
     } else {
       toast({
         title: "❌ Creation Failed",
@@ -1681,23 +1786,656 @@ const StudentPortal = () => {
     }
   };
 
-
-  // Function to update user profile data in admin panel
-  const updateUserProfileInAdmin = async (email: string, profileData: any) => {
+  // Function to create a new user with complete board and standards data
+  const createNewUserWithBoardAndStandards = async (email: string, password: string, board: Board, standard: Standard) => {
     try {
-      console.log("🔄 Updating user profile in admin panel:", email, profileData);
-      const response = await fetch(`${ADMIN_BASE_URL}/api/users/profile`, {
+      const userDetails = {
+        username: email.split('@')[0],
+        password: password,
+        email: email,
+        firstName: email.split('@')[0],
+        lastName: "Student",
+        role: "student",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        lastActive: new Date().toISOString()
+      };
+      
+      console.log("🔄 Creating new user with complete data:", {
+        user: userDetails,
+        board: board,
+        standard: standard
+      });
+      
+      // Send new user data to admin panel with board and standards
+      const adminResult = await sendUserDataToAdmin(userDetails, board, standard);
+      
+      if (adminResult) {
+        console.log("✅ New user created successfully with board and standards");
+        
+        // Save user session
+        localStorage.setItem("spg_logged_in_email", email);
+        setUserEmail(email);
+        setIsLoggedIn(true);
+        
+        // Save board and standard selections
+        setSelectedBoard(board);
+        setSelectedStandard(standard);
+        localStorage.setItem("spg_selected_board", JSON.stringify(board));
+        localStorage.setItem("spg_selected_standard", JSON.stringify(standard));
+        
+        // Save user activity
+        await saveUserActivity("user_created", {
+          boardId: board.id,
+          standardId: standard.id,
+          boardName: board.name,
+          standardName: standard.name
+        });
+        
+        toast({
+          title: "✅ User Created Successfully!",
+          description: `User ${email} created with ${board.name} - ${standard.name}`,
+        });
+        
+        return { success: true, user: adminResult };
+      } else {
+        console.error("❌ Failed to create user in admin panel");
+        toast({
+          title: "❌ User Creation Failed",
+          description: "Failed to create user in admin panel",
+          variant: "destructive"
+        });
+        return { success: false, error: "Failed to create user in admin panel" };
+      }
+    } catch (error) {
+      console.error("❌ Error creating new user:", error);
+      toast({
+        title: "❌ User Creation Failed",
+        description: "An error occurred while creating the user",
+        variant: "destructive"
+      });
+      return { success: false, error: error.message };
+    }
+  };
+
+  // Function to check if a subject is purchased by the user
+  const isSubjectPurchased = (subjectId: number, userPurchasedSubjects: any[]) => {
+    if (!userPurchasedSubjects || !Array.isArray(userPurchasedSubjects)) {
+      return false;
+    }
+    return userPurchasedSubjects.some((subject: any) => subject.id === subjectId);
+  };
+
+  // Function to refresh user's purchased subjects from API
+  const refreshUserPurchasedSubjects = async () => {
+    try {
+      const currentEmail = localStorage.getItem("spg_logged_in_email");
+      if (!currentEmail) {
+        console.log("❌ No logged in email found");
+        return;
+      }
+
+      console.log("🔄 Refreshing user's purchased subjects from API...");
+      const userProfile = await fetchUserProfileFromAdmin(currentEmail);
+      
+      if (userProfile) {
+        setUserPreviousData(userProfile);
+        console.log("✅ User's purchased subjects refreshed:", userProfile.purchasedSubjects);
+        
+        // Also update localStorage to keep it in sync
+        if (userProfile.purchasedSubjects && userProfile.purchasedSubjects.length > 0) {
+          localStorage.setItem('spg_purchases', JSON.stringify(userProfile.purchasedSubjects));
+        } else {
+          localStorage.setItem('spg_purchases', JSON.stringify([]));
+        }
+      } else {
+        console.log("❌ User profile not found in API - user may not exist");
+        // Set empty purchased subjects if user doesn't exist
+        setUserPreviousData({ purchasedSubjects: [] });
+        localStorage.setItem('spg_purchases', JSON.stringify([]));
+      }
+    } catch (error) {
+      console.error("❌ Error refreshing user's purchased subjects:", error);
+      // If API fails, assume no purchased subjects
+      setUserPreviousData({ purchasedSubjects: [] });
+      localStorage.setItem('spg_purchases', JSON.stringify([]));
+    }
+  };
+
+  // Function to update user's purchased subjects
+  const updateUserPurchasedSubjects = async (email: string, subjectId: number, subjectName: string) => {
+    try {
+      // First, get current user data to see existing purchased subjects
+      const currentUserResponse = await fetch(`${ADMIN_BASE_URL}/api/users`);
+      
+      if (currentUserResponse.ok) {
+        const allUsers = await currentUserResponse.json();
+        const currentUserData = allUsers.find((u: any) => u.email === email);
+        
+        if (!currentUserData) {
+          console.error("❌ User not found:", email);
+          toast({
+            title: "❌ User Not Found",
+            description: "User not found in API",
+          });
+          return;
+        }
+        
+        const existingPurchasedSubjects = currentUserData.purchasedSubjects || [];
+        
+        // Check if subject is already purchased
+        const alreadyPurchased = isSubjectPurchased(subjectId, existingPurchasedSubjects);
+        
+        if (alreadyPurchased) {
+          console.log("📚 Subject already purchased:", subjectName);
+          toast({
+            title: "📚 Already Purchased",
+            description: `You have already purchased ${subjectName}`,
+          });
+          return;
+        }
+        
+        // Add new subject to purchased subjects
+        const updatedPurchasedSubjects = [
+          ...existingPurchasedSubjects,
+          { id: subjectId, name: subjectName }
+        ];
+        
+        // Update user with new purchased subjects
+        const updateData = {
+          purchasedSubjects: updatedPurchasedSubjects
+        };
+        
+        console.log("🔄 Updating user's purchased subjects:", {
+          email: email,
+          newSubject: { id: subjectId, name: subjectName },
+          allPurchasedSubjects: updatedPurchasedSubjects
+        });
+        
+        const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ email, ...updateData }),
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log("✅ User's purchased subjects updated successfully:", result);
+          
+          toast({
+            title: "✅ Subject Purchased!",
+            description: `${subjectName} has been added to your purchased subjects!`,
+          });
+          
+          // Refresh the UI to show the subject as unlocked
+          window.location.reload();
+          
+          return result;
+        } else {
+          const errorText = await response.text();
+          console.error("❌ Failed to update purchased subjects:", response.status, response.statusText);
+          console.error("❌ Error details:", errorText);
+          
+          // Try to parse error response for more details
+          let errorMessage = `Failed to update purchased subjects: ${response.status} ${response.statusText}`;
+          try {
+            const errorData = JSON.parse(errorText);
+            if (errorData.message) {
+              errorMessage = errorData.message;
+            }
+          } catch (e) {
+            // Use default error message if JSON parsing fails
+          }
+          
+          toast({
+            title: "❌ Update Error",
+            description: errorMessage,
+            variant: "destructive"
+          });
+          
+          // Still update localStorage as fallback
+          try {
+            const currentPurchases = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
+            const updatedPurchases = [...currentPurchases, { id: subjectId, name: subjectName }];
+            localStorage.setItem('spg_purchases', JSON.stringify(updatedPurchases));
+            console.log("💾 Updated localStorage as fallback:", updatedPurchases);
+          } catch (localError) {
+            console.error("❌ Failed to update localStorage:", localError);
+          }
+          
+          return null;
+        }
+      } else {
+        console.error("❌ Failed to fetch current user data:", currentUserResponse.status, currentUserResponse.statusText);
+        toast({
+          title: "❌ Fetch Failed",
+          description: "Failed to fetch current user data",
+          variant: "destructive"
+        });
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error updating purchased subjects:", error);
+      toast({
+        title: "❌ Update Error",
+        description: "An error occurred while updating purchased subjects",
+        variant: "destructive"
+      });
+      return null;
+    }
+  };
+
+  // Function to POST a purchased subject to /api/users/email/:email/subjects
+  const postPurchasedSubject = async (email: string, subjectId: number, subjectName: string) => {
+    try {
+      const payload = { subjectId, subjectName };
+      console.log("🧾 Posting purchased subject to API:", { email, ...payload });
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users/email/${encodeURIComponent(email)}/subjects`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const result = await response.json().catch(() => ({}));
+        console.log("✅ Subject posted successfully:", result);
+        toast({
+          title: "✅ Subject Purchased!",
+          description: `${subjectName} has been added to your purchased subjects!`,
+        });
+        // Refresh from API so UI reflects latest state
+        await refreshUserPurchasedSubjects();
+        return result;
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to post purchased subject:", response.status, response.statusText);
+        console.error("❌ Error details:", errorText);
+        let errorMessage = `Failed to add subject: ${response.status} ${response.statusText}`;
+        try {
+          const parsed = JSON.parse(errorText);
+          if (parsed?.message) errorMessage = parsed.message;
+        } catch {}
+        toast({ title: "❌ Update Error", description: errorMessage, variant: "destructive" });
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error posting purchased subject:", error);
+      toast({ title: "❌ Update Error", description: "Failed to add purchased subject", variant: "destructive" });
+      return null;
+    }
+  };
+
+  // Function to test direct API call with user-provided data
+  const testDirectAPICall = async () => {
+    try {
+      // Use actual user-provided data from the form or get from existing users
+      const currentLoggedInEmail = localStorage.getItem("spg_logged_in_email");
+      const userEmail = email || currentLoggedInEmail;
+      
+      if (!userEmail) {
+        toast({
+          title: "❌ No User Email",
+          description: "Please log in first or provide an email in the form",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const userPassword = password || "testpass123";
+      const userFirstName = userEmail.split('@')[0];
+      
+      // Use user-selected board and standard IDs
+      const userSelectedBoardId = selectedBoard?.id || 2;
+      const userSelectedStandardId = selectedStandard?.id || 4;
+      
+      const testUser = {
+        username: userEmail.split('@')[0], // User-provided email prefix
+        password: userPassword, // User-provided password
+        email: userEmail, // User-provided email
+        firstName: userFirstName, // User-provided firstName
+        lastName: "Student", // Default lastName
+        role: "user", // Use "user" role as in PowerShell example
+        selectedBoardId: userSelectedBoardId, // User-selected board ID
+        selectedStandardId: userSelectedStandardId, // User-selected standard ID
+        purchasedSubjects: [] // Empty array for new users
+      };
+      
+      console.log("🧪 Testing with user-provided data and user-selected board/standard:", testUser);
+      
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(testUser),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ Direct API call successful:", result);
+        
+        toast({
+          title: "✅ Direct API Test Success!",
+          description: `User ${testUser.email} created with user-provided data!`,
+        });
+        
+        // Verify the created user
+        setTimeout(async () => {
+          console.log("🔍 Verifying direct API created user...");
+          await fetchAndDisplayUserData(testUser.email);
+        }, 1000);
+        
+        return result;
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Direct API call failed:", response.status, response.statusText);
+        console.error("❌ Error details:", errorText);
+        
+        toast({
+          title: "❌ Direct API Test Failed",
+          description: `Failed: ${response.status} ${response.statusText}`,
+          variant: "destructive"
+        });
+        
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error in direct API call:", error);
+      toast({
+        title: "❌ Direct API Test Error",
+        description: "An error occurred during direct API test",
+        variant: "destructive"
+      });
+      return null;
+    }
+  };
+
+  // Function to update existing user with user-selected board and standards data
+  const updateExistingUserWithBoardAndStandards = async (email: string) => {
+    try {
+      // Use user-selected board and standard IDs
+      const userSelectedBoardId = selectedBoard?.id || 2;
+      const userSelectedStandardId = selectedStandard?.id || 4;
+      
+      const updateData = {
+        selectedBoardId: userSelectedBoardId, // User-selected board ID
+        selectedStandardId: userSelectedStandardId, // User-selected standard ID
+        purchasedSubjects: [] // Empty array for now
+      };
+      
+      console.log("🔄 Updating existing user with user-selected board/standard:", {
+        email: email,
+        updateData: updateData
+      });
+      
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, ...profileData }),
+        body: JSON.stringify({ email, ...updateData }),
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ User updated successfully with user-selected board and standards:", result);
+        
+        toast({
+          title: "✅ User Updated!",
+          description: `User ${email} updated with user-selected board/standard!`,
+        });
+        
+        // Verify the updated user
+        setTimeout(async () => {
+          console.log("🔍 Verifying updated user data...");
+          await fetchAndDisplayUserData(email);
+        }, 1000);
+        
+        return result;
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to update user:", response.status, response.statusText);
+        console.error("❌ Error details:", errorText);
+        
+        toast({
+          title: "❌ Update Failed",
+          description: `Failed to update user: ${response.status} ${response.statusText}`,
+          variant: "destructive"
+        });
+        
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error updating user:", error);
+      toast({
+        title: "❌ Update Error",
+        description: "An error occurred while updating the user",
+        variant: "destructive"
+      });
+      return null;
+    }
+  };
+
+  // Function to test API endpoints and see what's available
+  const testAPIEndpoints = async () => {
+    try {
+      console.log("🔍 Testing API endpoints...");
+      
+      // Test 1: Get all users
+      console.log("1. Testing GET /api/users");
+      const allUsersResponse = await fetch(`${ADMIN_BASE_URL}/api/users`);
+      console.log("All users response:", allUsersResponse.status, allUsersResponse.statusText);
+      
+      if (allUsersResponse.ok) {
+        const allUsers = await allUsersResponse.json();
+        console.log("All users data:", allUsers);
+        
+        // Test 2: Try to get profile for each user
+        for (const user of allUsers) {
+          console.log(`2. Testing GET /api/users/profile?email=${user.email}`);
+          const profileResponse = await fetch(`${ADMIN_BASE_URL}/api/users/profile?email=${encodeURIComponent(user.email)}`);
+          console.log(`Profile for ${user.email}:`, profileResponse.status, profileResponse.statusText);
+          
+          if (profileResponse.ok) {
+            const profileData = await profileResponse.json();
+            console.log(`Profile data for ${user.email}:`, profileData);
+          } else {
+            const errorText = await profileResponse.text();
+            console.log(`Error for ${user.email}:`, errorText);
+          }
+        }
+      }
+      
+      toast({
+        title: "🔍 API Test Complete",
+        description: "Check console for detailed API endpoint test results",
+      });
+      
+    } catch (error) {
+      console.error("❌ Error testing API endpoints:", error);
+      toast({
+        title: "❌ API Test Failed",
+        description: "An error occurred while testing API endpoints",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Function to fetch and display user data from admin panel
+  const fetchAndDisplayUserData = async (email?: string) => {
+    try {
+      const targetEmail = email || localStorage.getItem("spg_logged_in_email");
+      if (!targetEmail) {
+        toast({
+          title: "❌ No Email Found",
+          description: "Please provide an email or log in first",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      console.log("🔄 Fetching user data for:", targetEmail);
+      
+      // Fetch user profile data
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users/profile?email=${encodeURIComponent(targetEmail)}`);
+      
+      if (response.ok) {
+        const userData = await response.json();
+        console.log("✅ User data fetched successfully:", userData);
+        
+        // Display user data in a formatted way
+        const displayData = {
+          "👤 User Info": {
+            "Email": userData.email || "N/A",
+            "Username": userData.username || "N/A",
+            "First Name": userData.firstName || "N/A",
+            "Last Name": userData.lastName || "N/A",
+            "Role": userData.role || "N/A",
+            "Status": userData.status || "N/A",
+            "Created At": userData.createdAt || "N/A",
+            "Last Active": userData.lastActive || "N/A"
+          },
+          "📚 Board & Standards": {
+            "Board ID": userData.boardId || userData.selectedBoard?.id || "N/A",
+            "Board Name": userData.boardName || userData.selectedBoard?.name || "N/A",
+            "Standard ID": userData.standardId || userData.selectedStandard?.id || "N/A",
+            "Standard Name": userData.standardName || userData.selectedStandard?.name || "N/A",
+            "Full Board Object": userData.selectedBoard || "N/A",
+            "Full Standard Object": userData.selectedStandard || "N/A"
+          },
+          "📄 Additional Data": {
+            "Created Papers": userData.createdPapers?.length || 0,
+            "Total Papers": userData.createdPapers || "N/A"
+          }
+        };
+        
+        console.log("📊 Formatted User Data:", displayData);
+        
+        toast({
+          title: "✅ User Data Fetched!",
+          description: `Data for ${targetEmail} loaded. Check console for details.`,
+        });
+        
+        return userData;
+      } else {
+        console.error("❌ Failed to fetch user data:", response.status, response.statusText);
+        toast({
+          title: "❌ Fetch Failed",
+          description: `Failed to fetch data: ${response.status} ${response.statusText}`,
+          variant: "destructive"
+        });
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error fetching user data:", error);
+      toast({
+        title: "❌ Fetch Error",
+        description: "An error occurred while fetching user data",
+        variant: "destructive"
+      });
+      return null;
+    }
+  };
+
+  // Function to fetch all users data from admin panel
+  const fetchAllUsersData = async () => {
+    try {
+      console.log("🔄 Fetching all users data...");
+      
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`);
+      
+      if (response.ok) {
+        const usersData = await response.json();
+        console.log("✅ All users data fetched successfully:", usersData);
+        
+        // Display summary
+        const summary = {
+          "📊 Users Summary": {
+            "Total Users": usersData.length || 0,
+            "Users with Board Data": usersData.filter((user: any) => user.boardId || user.selectedBoard).length,
+            "Users with Standard Data": usersData.filter((user: any) => user.standardId || user.selectedStandard).length,
+            "Users with Both Board & Standard": usersData.filter((user: any) => 
+              (user.boardId || user.selectedBoard) && (user.standardId || user.selectedStandard)
+            ).length
+          }
+        };
+        
+        console.log("📈 Users Summary:", summary);
+        console.log("👥 All Users Data:", usersData);
+        
+        toast({
+          title: "✅ All Users Data Fetched!",
+          description: `Found ${usersData.length} users. Check console for details.`,
+        });
+        
+        return usersData;
+      } else {
+        console.error("❌ Failed to fetch all users data:", response.status, response.statusText);
+        toast({
+          title: "❌ Fetch Failed",
+          description: `Failed to fetch all users: ${response.status} ${response.statusText}`,
+          variant: "destructive"
+        });
+        return null;
+      }
+    } catch (error) {
+      console.error("❌ Error fetching all users data:", error);
+      toast({
+        title: "❌ Fetch Error",
+        description: "An error occurred while fetching all users data",
+        variant: "destructive"
+      });
+      return null;
+    }
+  };
+
+  // Function to update user profile data in admin panel
+  const updateUserProfileInAdmin = async (email: string, profileData: any, boardData?: Board | null, standardData?: Standard | null, purchasedSubjects?: any[]) => {
+    try {
+      // First check if user exists
+      console.log("🔍 Checking if user exists before updating profile...");
+      const userExists = await checkUserExists(email);
+      
+      if (!userExists) {
+        console.log("❌ User doesn't exist in API - skipping profile update");
+        console.log("💡 User needs to be created first before profile can be updated");
+        return null;
+      }
+
+      // Include board and standards data in the profile update using correct field names
+      const completeProfileData = {
+        ...profileData,
+        selectedBoardId: boardData?.id || null,
+        selectedStandardId: standardData?.id || null,
+        // Keep the full objects for reference
+        selectedBoard: boardData || null,
+        selectedStandard: standardData || null,
+        // Also include the names for convenience
+        boardName: boardData?.name || null,
+        standardName: standardData?.name || null,
+        // Include purchased subjects if provided
+        purchasedSubjects: purchasedSubjects || profileData.purchasedSubjects || []
+      };
+      
+      console.log("🔄 Updating user profile in admin panel:", email, completeProfileData);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, ...completeProfileData }),
       });
 
       if (response.ok) {
         const result = await response.json();
         console.log("✅ User profile updated successfully:", result);
         return result;
+      } else if (response.status === 404) {
+        console.log("❌ User not found in API (404) - user may not exist yet");
+        console.log("💡 Consider creating the user first before updating profile");
+        return null;
       } else {
         console.error("❌ Failed to update user profile:", response.status, response.statusText);
         return null;
@@ -1743,14 +2481,23 @@ const StudentPortal = () => {
   const fetchUserProfileFromAdmin = async (email: string) => {
     try {
       console.log("🔄 Fetching user profile from admin panel:", email);
-      const response = await fetch(`${ADMIN_BASE_URL}/api/users/profile?email=${encodeURIComponent(email)}`);
+      const response = await fetch(`${ADMIN_BASE_URL}/api/users`);
 
       if (response.ok) {
-        const result = await response.json();
-        console.log("✅ User profile fetched successfully:", result);
-        return result;
+        const allUsers = await response.json();
+        console.log("✅ All users fetched successfully:", allUsers);
+        
+        // Find the specific user by email
+        const user = allUsers.find((u: any) => u.email === email);
+        if (user) {
+          console.log("✅ User found:", user);
+          return user;
       } else {
-        console.error("❌ Failed to fetch user profile:", response.status, response.statusText);
+          console.log("❌ User not found in API:", email);
+          return null;
+        }
+      } else {
+        console.error("❌ Failed to fetch users:", response.status, response.statusText);
         return null;
       }
     } catch (error) {
@@ -1813,10 +2560,10 @@ const StudentPortal = () => {
             lastActive: new Date().toISOString()
           };
           
-          // Send new user data to admin panel
-          const adminResult = await sendUserDataToAdmin(userDetails);
+          // Send new user data to admin panel with board and standards
+          const adminResult = await sendUserDataToAdmin(userDetails, selectedBoard, selectedStandard);
           if (adminResult) {
-            console.log("✅ New user registered in admin panel");
+            console.log("✅ New user registered in admin panel with board and standards");
           }
           
           // For new users, redirect to admin panel with board ID and standard ID
@@ -2055,15 +2802,6 @@ const StudentPortal = () => {
                     </>
                   )}
                 </Button>
-                
-                {/* Test button for user creation */}
-                <Button
-                  onClick={testCreateUser}
-                  variant="outline"
-                  className="w-full h-10 text-xs"
-                >
-                  🧪 Test Create User
-                </Button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -2076,13 +2814,10 @@ const StudentPortal = () => {
                     <br />
                     <span className="font-medium text-foreground">{email}</span>
                     <br />
-                    <span className="text-xs text-muted-foreground">Password: ••••••••</span>
+                    {/* Removed password hint for cleaner UI */}
                   </p>
                   
-                  {/* Debug info */}
-                  <div className="mt-2 p-2 bg-gray-100 text-xs text-gray-600 rounded">
-                    DEBUG: userExists = {String(userExists)}, userPreviousData = {userPreviousData ? 'exists' : 'null'}
-                  </div>
+                  {/* Debug info removed for production */}
                   
                   {/* Show previous user data if exists */}
                   {userExists === true && userPreviousData && (
@@ -2501,11 +3236,20 @@ const StudentPortal = () => {
                       .map((subject, index) => {
                         const subjectObj = typeof subject === "object" ? subject : { name: subject, price: 0 };
                         const isFree = !subjectObj.price || subjectObj.price === 0;
+                        
+                        // Check if subject is purchased - ALWAYS check API first, never localStorage
                         let isPurchased = false;
-                        try {
-                          const purchased = JSON.parse(localStorage.getItem('spg_purchases') || '[]');
-                          isPurchased = Array.isArray(purchased) && purchased.some((it: any) => it?.id === subjectObj.id);
-                        } catch {}
+                        const currentEmail = localStorage.getItem("spg_logged_in_email");
+                        
+                        // ONLY use API data, never localStorage for purchased subjects
+                        if (currentEmail && userPreviousData && userPreviousData.purchasedSubjects) {
+                          isPurchased = isSubjectPurchased(subjectObj.id, userPreviousData.purchasedSubjects);
+                          console.log(`📚 Subject ${subjectObj.name} (ID: ${subjectObj.id}) - API check: ${isPurchased}`);
+                        } else {
+                          // If no API data available, assume NOT purchased
+                          isPurchased = false;
+                          console.log(`📚 Subject ${subjectObj.name} (ID: ${subjectObj.id}) - No API data, assuming NOT purchased`);
+                        }
                         
                         return (
                           <div

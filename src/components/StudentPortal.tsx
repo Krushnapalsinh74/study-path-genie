@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
@@ -82,6 +82,7 @@ const StudentPortal = () => {
   const [selectedStandard, setSelectedStandard] = useState<Standard | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
   const [selectedChapter, setSelectedChapter] = useState<string | string[] | null>(null);
+  const [typeAllocations, setTypeAllocations] = useState<Record<string, number>>({});
   const [selectedQuestionType, setSelectedQuestionType] = useState<string | null>(null);
   const [paperMode, setPaperMode] = useState<string | null>(null);
   const [showBoardsPopup, setShowBoardsPopup] = useState(false);
@@ -2545,100 +2546,39 @@ const StudentPortal = () => {
           loginTime: new Date().toISOString()
         });
         
-        // Handle user data based on whether they're new or existing
-        if (userExists === false) {
-          // New user - send complete registration data to admin panel
-          const userDetails = {
-            username: email.split('@')[0],
-            password: password, // Use actual password from form
-            email: email,
-            firstName: email.split('@')[0],
-            lastName: "Student",
-            role: "student",
-            status: "active",
-            createdAt: new Date().toISOString(),
-            lastActive: new Date().toISOString()
-          };
-          
-          // Send new user data to admin panel with board and standards
-          const adminResult = await sendUserDataToAdmin(userDetails, selectedBoard, selectedStandard);
-          if (adminResult) {
-            console.log("✅ New user registered in admin panel with board and standards");
-          }
-          
-          // For new users, redirect to admin panel with board ID and standard ID
-          const boardId = selectedBoard?.id || '';
-          const standardId = selectedStandard?.id || '';
-          
-          if (boardId && standardId) {
-            // Create admin panel URL with parameters
-            const adminPanelUrl = `https://08m8v685-3002.inc1.devtunnels.ms/admin?boardId=${boardId}&standardId=${standardId}&userEmail=${encodeURIComponent(email)}&isNewUser=true`;
-            
-            // Redirect to admin panel
-            window.location.href = adminPanelUrl;
+        // If user already exists, fetch a fresh profile to decide navigation
+        if (userExists === true) {
+          const freshProfile = await fetchUserProfileFromAdmin(email);
+          const apiBoardId = freshProfile?.selectedBoardId || freshProfile?.selectedBoard?.id;
+          const apiStandardId = freshProfile?.selectedStandardId || freshProfile?.selectedStandard?.id;
+
+          if (apiBoardId && apiStandardId) {
+            const boardObj: any = freshProfile?.selectedBoard || { id: apiBoardId, name: freshProfile?.boardName || "Board" };
+            const standardObj: any = freshProfile?.selectedStandard || { id: apiStandardId, name: freshProfile?.standardName || "Standard" };
+            setSelectedBoard(boardObj);
+            setSelectedStandard(standardObj);
+            try { localStorage.setItem("spg_selected_board", JSON.stringify(boardObj)); } catch {}
+            try { localStorage.setItem("spg_selected_standard", JSON.stringify(standardObj)); } catch {}
+            setCurrentStep("subjects");
+            await refreshUserPurchasedSubjects();
+            setLoading(false);
+            toast({ title: "Login Successful", description: "Welcome back! Loaded your board and standard from your profile." });
             return;
-          } else {
-            // If no board/standard selected, go to subjects to select them first
-            setCurrentStep("subjects");
-            toast({
-              title: "Registration Successful",
-              description: "Welcome! Please select your board and standard to access the admin panel.",
-            });
           }
-        } else if (userExists === true && userPreviousData) {
-          // Existing user - restore their profile data
-          console.log("🔄 Restoring user data from admin panel...");
-          
-          if (userPreviousData.selectedBoard) {
-            setSelectedBoard(userPreviousData.selectedBoard);
-            // Save to localStorage for persistence
-            localStorage.setItem("spg_selected_board", JSON.stringify(userPreviousData.selectedBoard));
-          }
-          if (userPreviousData.selectedStandard) {
-            setSelectedStandard(userPreviousData.selectedStandard);
-            // Save to localStorage for persistence
-            localStorage.setItem("spg_selected_standard", JSON.stringify(userPreviousData.selectedStandard));
-          }
-          if (userPreviousData.createdPapers) {
-            // Restore created papers to localStorage
-            localStorage.setItem('createdPapers', JSON.stringify(userPreviousData.createdPapers));
-          }
-          
-          // For returning users with board/standard data, also redirect to admin panel
-          const boardId = userPreviousData.selectedBoard?.id || selectedBoard?.id || '';
-          const standardId = userPreviousData.selectedStandard?.id || selectedStandard?.id || '';
-          
-          if (boardId && standardId) {
-            const adminPanelUrl = `https://08m8v685-3002.inc1.devtunnels.ms/admin?boardId=${boardId}&standardId=${standardId}&userEmail=${encodeURIComponent(email)}&isNewUser=false`;
-            
-            // Open admin panel in new tab for returning users
-            window.open(adminPanelUrl, '_blank');
-          }
-          
-          console.log("✅ User profile restored from admin panel");
         }
-        
-        // If board/standard already saved, jump to subjects
+
+        // Otherwise, enforce board and standard selection
         try {
-          const boardRaw = localStorage.getItem("spg_selected_board");
-          const standardRaw = localStorage.getItem("spg_selected_standard");
-          if (boardRaw && standardRaw) {
-            const board = JSON.parse(boardRaw);
-            const standard = JSON.parse(standardRaw);
-            setSelectedBoard(board);
-            setSelectedStandard(standard);
-            setCurrentStep("subjects");
-          } else {
-            setCurrentStep("subjects");
-          }
-        } catch {
-          setCurrentStep("subjects");
-        }
+          localStorage.removeItem("spg_selected_board");
+          localStorage.removeItem("spg_selected_standard");
+        } catch {}
+        setSelectedBoard(null);
+        setSelectedStandard(null);
+        setShowBoardsPopup(true);
+        setIsModalOpen(true);
+        setCurrentStep("boards");
         setLoading(false);
-        toast({
-          title: "Login Successful",
-          description: isNew ? "Welcome to the Student Portal! Redirecting to admin panel..." : "Welcome back to the Student Portal!",
-        });
+        toast({ title: "Login Successful", description: "Please select your Board and Standard to continue." });
         return;
       } else {
         setError("Could not verify OTP. Please check if the server is running and accessible.");
@@ -2714,18 +2654,7 @@ const StudentPortal = () => {
     return picked;
   };
 
-  // Render ChapterPaper component when chapter mode is selected
-  if (showChapterPaper && paperMode === "chapter") {
-    return (
-      <ChapterPaper
-        subject={selectedSubject?.name || ""}
-        standard={selectedStandard?.name || ""}
-        board={selectedBoard?.name || ""}
-        chapters={chapters}
-        onBack={() => setShowChapterPaper(false)}
-      />
-    );
-  }
+  // Deprecated direct ChapterPaper redirect removed; we now use themed chapter-selection flow
 
   if (currentStep === "login") {
     console.log("Rendering login step");
@@ -3418,9 +3347,15 @@ const StudentPortal = () => {
                 </div>
 
                 <div
-                  onClick={() => {
+                  onClick={async () => {
+                    if (!selectedSubject?.id) {
+                      toast({ title: "Select a Subject", description: "Please choose a subject first." });
+                      return;
+                    }
                     setPaperMode("chapter");
-                    setShowChapterPaper(true);
+                    setSelectedChapterNames([]);
+                    try { await fetchChapters(selectedSubject.id); } catch {}
+                    setCurrentStep("chapter-selection");
                   }}
                   className="cursor-pointer border border-gray-200 rounded-xl p-4 hover:border-purple-300 hover:bg-purple-50 transition-all duration-200 group"
                 >
@@ -3555,20 +3490,20 @@ const StudentPortal = () => {
     };
 
     return (
-      <div className="min-h-screen bg-gradient-background p-4">
+      <div className="min-h-screen bg-gradient-to-b from-academic-background via-white to-white p-4">
         <div className="max-w-6xl mx-auto">
-          <Card className="shadow-card animate-fade-in">
+          <Card className="shadow-card animate-fade-in border border-academic-border/40">
             <CardHeader className="text-center">
-              <CardTitle className="text-3xl font-bold text-foreground mb-2">
+              <CardTitle className="text-2xl md:text-3xl font-bold text-foreground mb-2">
                 Select Chapters
               </CardTitle>
-              <CardDescription>
-                {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
+              <CardDescription className="text-sm md:text-base">
+                {selectedBoard?.name} • {selectedStandard?.name} • {selectedSubject?.name}
               </CardDescription>
               <Button
                 onClick={() => setCurrentStep("paper-options")}
                 variant="ghost"
-                className="mt-2"
+                className="mt-2 text-academic-blue"
               >
                 <ChevronLeft className="w-4 h-4 mr-2" />
                 Change Paper Mode
@@ -3580,29 +3515,30 @@ const StudentPortal = () => {
                 <div className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {chapters.map((chapter) => (
-                      <Card key={chapter.id} className="p-4">
-                        <div className="flex items-start space-x-3">
+                      <Card key={chapter.id} className="p-4 hover:shadow-md transition-shadow border-academic-border/30">
+                        <div className="flex items-start gap-3">
                           <Checkbox
                             id={`chapter-${chapter.id}`}
                             checked={selectedChapters.includes(chapter.id)}
                             onCheckedChange={() => toggleChapter(chapter.id)}
                           />
-                          <Label htmlFor={`chapter-${chapter.id}`} className="cursor-pointer">
+                          <Label htmlFor={`chapter-${chapter.id}`} className="cursor-pointer font-medium text-academic-ink">
                             {chapter.name}
+                            <div className="text-xs text-muted-foreground">Click to select</div>
                           </Label>
                         </div>
                       </Card>
                     ))}
                   </div>
 
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center border-t pt-4">
                     <div className="text-sm text-muted-foreground">
                       {selectedChapters.length} chapter{selectedChapters.length === 1 ? '' : 's'} selected
                     </div>
                     <Button
                       onClick={generateFromSelectedChapters}
                       disabled={selectedChapters.length === 0 || multiChapterLoading}
-                      className="bg-academic-blue hover:bg-academic-blue/90"
+                      className="bg-academic-blue hover:bg-academic-blue/90 text-white"
                     >
                       {multiChapterLoading ? (
                         <>
@@ -3765,12 +3701,18 @@ const StudentPortal = () => {
                             setError('No questions found in selected chapters.');
                             return;
                           }
-                          setSelectedQuestions(pool);
+                          // Build types map and go to allocation screen
+                          const byType: Record<string, number> = {};
+                          pool.forEach(q => {
+                            const raw = (q.type || '').toString().trim();
+                            if (!raw) return; // skip questions without a type
+                            const t = raw.charAt(0).toUpperCase() + raw.slice(1); // pretty label (e.g., "text" -> "Text")
+                            byType[t] = (byType[t] || 0) + 1;
+                          });
                           setSelectedChapter(selectedChapterNames.join(', '));
-                          setSelectedQuestionType('Mixed');
-                          // Immediately generate PDF
-                          await new Promise(resolve => setTimeout(resolve, 0));
-                          await generatePDF();
+                          setSelectedQuestions(pool); // pool retained; we will sample from it
+                          setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
+                          setCurrentStep('type-allocation');
                         } catch (e) {
                           console.error(e);
                           setError('Failed to generate PDF from selected chapters.');
@@ -3778,7 +3720,7 @@ const StudentPortal = () => {
                       }}
                       className="bg-academic-blue hover:bg-academic-blue/90"
                     >
-                      Generate PDF
+                      Next
                     </Button>
                   </div>
                 </div>
@@ -3856,6 +3798,111 @@ const StudentPortal = () => {
                 </Alert>
               )}
             </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // New: Type allocation step for mixed paper from selected chapters
+  if (currentStep === 'type-allocation') {
+    const byTypeMap: Record<string, { count: number; marks: number } > = {};
+    (selectedQuestions as any[]).forEach((q: any) => {
+      const raw = (q.type || '').toString().trim();
+      if (!raw) return; // only show types that exist on questions
+      const t = raw.charAt(0).toUpperCase() + raw.slice(1);
+      const m = Number(q.marks || 0);
+      if (!byTypeMap[t]) byTypeMap[t] = { count: 0, marks: 0 };
+      byTypeMap[t].count += 1;
+      byTypeMap[t].marks = m || byTypeMap[t].marks;
+    });
+    const types = Object.keys(byTypeMap);
+    const totalMarks = types.reduce((sum, t) => sum + (typeAllocations[t] || 0) * (byTypeMap[t].marks || 0), 0);
+    const totalSelected = types.reduce((sum, t) => sum + (typeAllocations[t] || 0), 0);
+
+    return (
+      <div className="min-h-screen bg-gradient-background p-4">
+        <div className="max-w-4xl mx-auto">
+          <Card className="shadow-card animate-fade-in">
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold">Chapter Paper</CardTitle>
+              <CardDescription className="flex justify-between">
+                <span>{selectedStandard?.name} - {selectedSubject?.name}</span>
+                <span>Total Exam Mark : {totalMarks}</span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {types.map((t) => (
+                  <Card key={t} className="border bg-card hover:border-primary/50 transition-all">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="text-base font-semibold leading-tight">{t}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">{byTypeMap[t].marks ? `${byTypeMap[t].marks} Marks` : ''}</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground whitespace-nowrap">{byTypeMap[t].count} Questions</div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Ask Question</div>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={byTypeMap[t].count}
+                            value={typeAllocations[t] ?? 0}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(byTypeMap[t].count, Number(e.target.value || 0)));
+                              setTypeAllocations(prev => ({ ...prev, [t]: v }));
+                            }}
+                            className="w-full"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Out of Question</div>
+                          <Input value={String(byTypeMap[t].count)} readOnly className="w-full" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </CardContent>
+            <CardFooter className="sticky bottom-0 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t">
+              <div className="w-full flex items-center justify-between gap-3">
+                <div className="text-sm text-muted-foreground">Selected: {totalSelected} • Total Marks: {totalMarks}</div>
+                <Button
+                  className="min-w-32 bg-academic-blue hover:bg-academic-blue/90"
+                  onClick={() => {
+                    // Sample from selectedQuestions according to typeAllocations
+                    const pool = selectedQuestions as any[];
+                    const result: any[] = [];
+                    const byType: Record<string, any[]> = {};
+                    pool.forEach(q => {
+                      const raw = (q.type || '').toString().trim();
+                      if (!raw) return;
+                      const t = raw.charAt(0).toUpperCase() + raw.slice(1);
+                      if (!byType[t]) byType[t] = [];
+                      byType[t].push(q);
+                    });
+                    Object.keys(typeAllocations).forEach(t => {
+                      const need = Math.min(typeAllocations[t] || 0, (byType[t] || []).length);
+                      const shuffled = (byType[t] || []).slice().sort(() => Math.random() - 0.5);
+                      result.push(...shuffled.slice(0, need));
+                    });
+                    if (result.length === 0) {
+                      setError('Please enter at least one question.');
+                      return;
+                    }
+                    setSelectedQuestions(result);
+                    setSelectedQuestionType('Mixed');
+                    setCurrentStep('paper-review');
+                  }}
+                >
+                  Next
+                </Button>
+              </div>
+            </CardFooter>
           </Card>
         </div>
       </div>

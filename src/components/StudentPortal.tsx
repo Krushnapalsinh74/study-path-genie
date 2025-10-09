@@ -1351,8 +1351,23 @@ const StudentPortal = () => {
     setError("");
     
     try {
-      console.log("🔄 Fetching questions from API for subject:", subjectId);
-      const response = await fetch(`${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`);
+      console.log("🔄 Fetching questions from API for subject:", subjectId, "chapter:", chapterName || "ALL");
+      
+      // Try chapter-specific endpoint first if chapterName is provided
+      let url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
+      if (chapterName) {
+        // Try chapter-specific endpoint
+        url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/chapters/${encodeURIComponent(chapterName)}/questions`;
+      }
+      
+      let response = await fetch(url);
+      
+      // If chapter-specific endpoint fails, fall back to all questions and filter
+      if (!response.ok && chapterName) {
+        console.log("📝 Chapter-specific endpoint failed, fetching all questions and filtering...");
+        url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
+        response = await fetch(url);
+      }
       
       if (!response.ok) {
         throw new Error(`Failed to fetch questions: ${response.status} ${response.statusText}`);
@@ -1367,9 +1382,41 @@ const StudentPortal = () => {
       }
       
       const data = await response.json();
-      console.log("✅ Questions fetched successfully:", data);
+      console.log("✅ Raw questions fetched:", data.length, "questions");
       
-      const normalized = data.map(normalizeQuestion);
+      let normalized = data.map(normalizeQuestion);
+      
+      // Filter by chapter if specified and we got all questions
+      if (chapterName && url.includes('/questions') && !url.includes('/chapters/')) {
+        console.log("🔍 Filtering questions by chapter:", chapterName);
+        console.log("📊 Total questions before filtering:", normalized.length);
+        
+        normalized = normalized.filter((q: Question) => {
+          // Check various chapter field names that might exist in the API response
+          const questionChapter = q.chapter || q.chapterName || q.chapter_name || 
+                                 (q as any).chapterTitle || (q as any).chapter_title;
+          
+          if (questionChapter) {
+            const matches = questionChapter.toLowerCase().trim() === chapterName.toLowerCase().trim();
+            console.log(`🔍 Question: "${q.question?.substring(0, 50)}..." | Chapter: "${questionChapter}" | Matches: ${matches}`);
+            return matches;
+          }
+          
+          console.log(`⚠️ Question has no chapter field: "${q.question?.substring(0, 50)}..."`);
+          return false;
+        });
+        
+        console.log(`🎯 Filtered to ${normalized.length} questions for chapter "${chapterName}"`);
+        
+        if (normalized.length === 0) {
+          console.warn(`⚠️ No questions found for chapter "${chapterName}". Available chapters in data:`);
+          const availableChapters = [...new Set(data.map((q: any) => 
+            q.chapter || q.chapterName || q.chapter_name || q.chapterTitle || q.chapter_title || 'No Chapter'
+          ))];
+          console.log("📋 Available chapters:", availableChapters);
+        }
+      }
+      
       if (chapterName) {
         setChapterQuestions(normalized);
       } else {
@@ -1383,71 +1430,16 @@ const StudentPortal = () => {
       console.error("❌ Error fetching questions:", error);
       setError("Failed to load questions. Please check your connection and try again.");
       
-      // Fallback to sample data if API fails
-      console.log("ℹ️ Falling back to sample questions data");
-      const sampleQuestions = [
-        {
-          id: 1,
-          question: "What is the derivative of x²?",
-          type: "Short Answer",
-          difficulty: "Easy",
-          chapter: chapterName || "Calculus",
-          marks: 2,
-          text: "What is the derivative of x²?",
-          content: "What is the derivative of x²?"
-        },
-        {
-          id: 2,
-          question: "Solve the equation: 2x + 5 = 13",
-          type: "Short Answer",
-          difficulty: "Easy",
-          chapter: chapterName || "Algebra",
-          marks: 3,
-          text: "Solve the equation: 2x + 5 = 13",
-          content: "Solve the equation: 2x + 5 = 13"
-        },
-        {
-          id: 3,
-          question: "Explain the concept of photosynthesis.",
-          type: "Long Answer",
-          difficulty: "Medium",
-          chapter: chapterName || "Biology",
-          marks: 5,
-          text: "Explain the concept of photosynthesis.",
-          content: "Explain the concept of photosynthesis."
-        },
-        {
-          id: 4,
-          question: "What is the capital of India?",
-          type: "MCQ",
-          difficulty: "Easy",
-          chapter: chapterName || "General Knowledge",
-          marks: 1,
-          text: "What is the capital of India?",
-          content: "What is the capital of India?"
-        },
-        {
-          id: 5,
-          question: "Calculate the area of a circle with radius 7 cm.",
-          type: "Problem Solving",
-          difficulty: "Medium",
-          chapter: chapterName || "Geometry",
-          marks: 4,
-          text: "Calculate the area of a circle with radius 7 cm.",
-          content: "Calculate the area of a circle with radius 7 cm."
-        }
-      ];
-      
-      const normalized = sampleQuestions.map(normalizeQuestion);
+      // Return empty array instead of sample data
       if (chapterName) {
-        setChapterQuestions(normalized);
+        setChapterQuestions([]);
       } else {
         setQuestions((prev) => ({
           ...prev,
-          [subjectId]: normalized,
+          [subjectId]: [],
         }));
       }
-      return normalized as Question[];
+      return [] as Question[];
     } finally {
       setLoadingQuestions(false);
     }

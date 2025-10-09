@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages } from "lucide-react";
+import { Loader2, Mail, BookOpen, GraduationCap, Users, X, ChevronLeft, Search, ChevronRight, CreditCard, IndianRupee, Plus, FileText, ArrowLeft, Home, Calculator, Microscope, Globe, Atom, Beaker, Brain, MapPin, Languages, ChevronUp, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDarkMode } from "@/contexts/DarkModeContext";
 import { useModal } from "@/contexts/ModalContext";
@@ -116,8 +116,40 @@ const StudentPortal = () => {
   const [userPreviousData, setUserPreviousData] = useState<any>(null);
   const [isCheckingUser, setIsCheckingUser] = useState(false);
 
+  // Chapter expansion state for dropdowns
+  const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
+  const [chapterQuestionTypes, setChapterQuestionTypes] = useState<Record<string, string[]>>({});
+  const [loadingTypes, setLoadingTypes] = useState<Record<string, boolean>>({});
+
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // Helper functions for chapter expansion and question type loading
+  const loadQuestionTypes = async (chapterName: string) => {
+    if (chapterQuestionTypes[chapterName]?.length > 0) return; // Already loaded
+    
+    setLoadingTypes(prev => ({ ...prev, [chapterName]: true }));
+    try {
+      const questions = await fetchQuestions(selectedSubject.id!, chapterName);
+      const types = [...new Set(questions.map(q => q.type))];
+      setChapterQuestionTypes(prev => ({ ...prev, [chapterName]: types }));
+    } catch (error) {
+      console.error("Error loading question types:", error);
+    } finally {
+      setLoadingTypes(prev => ({ ...prev, [chapterName]: false }));
+    }
+  };
+
+  const handleChapterClick = (chapterName: string) => {
+    if (paperMode === 'chapter') return; // Skip for multi-chapter mode
+    
+    const isCurrentlyExpanded = expandedChapters[chapterName];
+    setExpandedChapters(prev => ({ ...prev, [chapterName]: !isCurrentlyExpanded }));
+    
+    if (!isCurrentlyExpanded) {
+      loadQuestionTypes(chapterName);
+    }
+  };
 
   // Base URLs for services
   const OTP_BASE_URL = "https://08m8v685-3000.inc1.devtunnels.ms";
@@ -1206,6 +1238,14 @@ const StudentPortal = () => {
       
       if (!response.ok) {
         throw new Error(`Failed to fetch questions: ${response.status} ${response.statusText}`);
+      }
+      
+      // Check if response is actually JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("❌ Expected JSON but received:", contentType, text.substring(0, 200));
+        throw new Error("Server returned HTML instead of JSON. API endpoint may not exist or server error occurred.");
       }
       
       const data = await response.json();
@@ -3609,71 +3649,136 @@ const StudentPortal = () => {
                   {chapters
                     .filter((chapter) => chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase()))
                     .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((chapter, index) => (
-                    <Card
-                      key={chapter.id || index}
-                      className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200"
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-center gap-4">
-                          {paperMode === 'chapter' ? (
-                            <Checkbox
-                              id={`chapter-${chapter.id}`}
-                              checked={selectedChapterNames.includes(chapter.name)}
-                              onCheckedChange={(checked) => {
-                                setSelectedChapterNames(prev => {
-                                  const set = new Set(prev);
-                                  if (checked) set.add(chapter.name); else set.delete(chapter.name);
-                                  return Array.from(set);
-                                });
-                              }}
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-                              <BookOpen className="w-5 h-5" />
+                    .map((chapter, index) => {
+                      const isExpanded = expandedChapters[chapter.name] || false;
+                      const types = chapterQuestionTypes[chapter.name] || [];
+                      const isLoadingTypes = loadingTypes[chapter.name] || false;
+
+                      return (
+                        <Card
+                          key={chapter.id || index}
+                          className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200"
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-center gap-4">
+                              {paperMode === 'chapter' ? (
+                                <Checkbox
+                                  id={`chapter-${chapter.id}`}
+                                  checked={selectedChapterNames.includes(chapter.name)}
+                                  onCheckedChange={(checked) => {
+                                    setSelectedChapterNames(prev => {
+                                      const set = new Set(prev);
+                                      if (checked) set.add(chapter.name); else set.delete(chapter.name);
+                                      return Array.from(set);
+                                    });
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                                  <BookOpen className="w-5 h-5" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <h3 className="text-base font-semibold whitespace-normal break-words leading-snug">
+                                  {chapter.name}
+                                </h3>
+                                <div className="mt-1">
+                                  <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                </div>
+                              </div>
+                              {paperMode !== 'chapter' && (
+                                <div className="flex gap-2">
+                                  <Button
+                                    onClick={() => {
+                                      const handleRandomSelect = async () => {
+                                        setSelectedChapter(chapter.name);
+                                        if (paperMode === 'random') {
+                                          const data = await fetchQuestions(selectedSubject.id!, chapter.name);
+                                          const pool = data || [];
+                                          if (pool.length === 0) { setError("No questions available in this chapter."); return; }
+                                          const picked = pickQuestionsForTarget(pool, targetTotalMarks);
+                                          const withCt = picked.map(q => ({ ...q, _ct: canonicalType(q.type) }));
+                                          const mcqs = withCt.filter(q => q._ct === 'MCQ').sort(() => Math.random() - 0.5);
+                                          const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
+                                          const arranged = [...mcqs, ...others];
+                                          setSelectedQuestions(arranged);
+                                          setSelectedQuestionType('Mixed');
+                                          setCurrentStep("paper-review");
+                                        }
+                                      };
+                                      handleRandomSelect();
+                                    }}
+                                    variant="outline"
+                                    size="sm"
+                                  >
+                                    Random
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleChapterClick(chapter.name)}
+                                    variant="secondary"
+                                    size="sm"
+                                  >
+                                    {isExpanded ? (
+                                      <>
+                                        <ChevronUp className="w-4 h-4 mr-1" />
+                                        Hide Types
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ChevronDown className="w-4 h-4 mr-1" />
+                                        Question Types
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                              )}
                             </div>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <h3 className="text-base font-semibold whitespace-normal break-words leading-snug">
-                              {chapter.name}
-                            </h3>
-                            <div className="mt-1">
-                              <Badge variant="secondary" className="text-xs">Chapter</Badge>
-                            </div>
-                          </div>
-                          {paperMode !== 'chapter' && (
-                            <Button
-                              onClick={() => {
-                                const handleChapterSelect = async () => {
-                                  setSelectedChapter(chapter.name);
-                                  if (paperMode === 'random') {
-                                    const data = await fetchQuestions(selectedSubject.id!, chapter.name);
-                                    const pool = data || [];
-                                    if (pool.length === 0) { setError("No questions available in this chapter."); return; }
-                                    const picked = pickQuestionsForTarget(pool, targetTotalMarks);
-                                    const withCt = picked.map(q => ({ ...q, _ct: canonicalType(q.type) }));
-                                    const mcqs = withCt.filter(q => q._ct === 'MCQ').sort(() => Math.random() - 0.5);
-                                    const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
-                                    const arranged = [...mcqs, ...others];
-                                    setSelectedQuestions(arranged);
-                                    setSelectedQuestionType('Mixed');
-                                    setCurrentStep("paper-review");
-                                  } else {
-                                    await fetchQuestions(selectedSubject.id!, chapter.name);
-                                    setCurrentStep("question-type-selection");
-                                  }
-                                };
-                                handleChapterSelect();
-                              }}
-                              variant="secondary"
-                            >
-                              Select
-                            </Button>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                            
+                            {/* Question Types Dropdown */}
+                            {paperMode !== 'chapter' && isExpanded && (
+                              <div className="mt-4 pl-14 border-t pt-4">
+                                {isLoadingTypes ? (
+                                  <div className="text-center py-4">
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
+                                    <p className="text-sm text-muted-foreground mt-2">Loading question types...</p>
+                                  </div>
+                                ) : types.length > 0 ? (
+                                  <div>
+                                    <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Available Question Types:</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      {types.map((type, typeIndex) => (
+                                        <Button
+                                          key={typeIndex}
+                                          onClick={() => {
+                                            setSelectedChapter(chapter.name);
+                                            setSelectedQuestionType(type);
+                                            setCurrentStep("question-selection");
+                                          }}
+                                          variant="outline"
+                                          size="sm"
+                                          className="justify-start h-auto p-3 hover:bg-primary/5"
+                                        >
+                                          <div className="text-left">
+                                            <div className="font-medium">{type}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                              {chapterQuestions.filter(q => q.type === type).length} questions
+                                            </div>
+                                          </div>
+                                        </Button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-center py-4">
+                                    <p className="text-sm text-muted-foreground">No question types available</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                 </div>
               ) : (
                 <div className="text-center py-12">
@@ -3858,12 +3963,12 @@ const StudentPortal = () => {
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name} - {selectedChapter} - {selectedQuestionType}
               </CardDescription>
               <Button
-                onClick={() => setCurrentStep("question-type-selection")}
+                onClick={() => setCurrentStep("chapter-selection")}
                 variant="ghost"
                 className="mt-2"
               >
                 <ChevronLeft className="w-4 h-4 mr-2" />
-                Change Question Type
+                Change Chapter
               </Button>
             </CardHeader>
 

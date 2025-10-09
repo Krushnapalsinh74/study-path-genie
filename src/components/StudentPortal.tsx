@@ -3645,7 +3645,7 @@ const StudentPortal = () => {
               {/* Removed marks input here for Random Paper, keep it on review page only */}
 
               {chapters.length > 0 ? (
-                <div className="space-y-3">
+                <div className="space-y-3 w-full">
                   {chapters
                     .filter((chapter) => chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase()))
                     .sort((a, b) => a.name.localeCompare(b.name))
@@ -3657,11 +3657,11 @@ const StudentPortal = () => {
                       return (
                         <Card
                           key={chapter.id || index}
-                          className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200"
+                          className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
                         >
                           <CardContent className="p-4">
-                            <div className="flex items-center gap-4">
-                              {paperMode === 'chapter' ? (
+                            {paperMode === 'chapter' ? (
+                              <div className="flex items-center gap-4 w-full">
                                 <Checkbox
                                   id={`chapter-${chapter.id}`}
                                   checked={selectedChapterNames.includes(chapter.name)}
@@ -3673,70 +3673,44 @@ const StudentPortal = () => {
                                     });
                                   }}
                                 />
-                              ) : (
-                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-                                  <BookOpen className="w-5 h-5" />
-                                </div>
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <h3 className="text-base font-semibold whitespace-normal break-words leading-snug">
-                                  {chapter.name}
-                                </h3>
-                                <div className="mt-1">
-                                  <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                    {chapter.name}
+                                  </h3>
+                                  <div className="mt-1">
+                                    <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                  </div>
                                 </div>
                               </div>
-                              {paperMode !== 'chapter' && (
-                                <div className="flex gap-2">
-                                  <Button
-                                    onClick={() => {
-                                      const handleRandomSelect = async () => {
-                                        setSelectedChapter(chapter.name);
-                                        if (paperMode === 'random') {
-                                          const data = await fetchQuestions(selectedSubject.id!, chapter.name);
-                                          const pool = data || [];
-                                          if (pool.length === 0) { setError("No questions available in this chapter."); return; }
-                                          const picked = pickQuestionsForTarget(pool, targetTotalMarks);
-                                          const withCt = picked.map(q => ({ ...q, _ct: canonicalType(q.type) }));
-                                          const mcqs = withCt.filter(q => q._ct === 'MCQ').sort(() => Math.random() - 0.5);
-                                          const others = withCt.filter(q => q._ct !== 'MCQ').sort((a, b) => (a.marks || 0) - (b.marks || 0));
-                                          const arranged = [...mcqs, ...others];
-                                          setSelectedQuestions(arranged);
-                                          setSelectedQuestionType('Mixed');
-                                          setCurrentStep("paper-review");
-                                        }
-                                      };
-                                      handleRandomSelect();
-                                    }}
-                                    variant="outline"
-                                    size="sm"
-                                  >
-                                    Random
-                                  </Button>
-                                  <Button
-                                    onClick={() => handleChapterClick(chapter.name)}
-                                    variant="secondary"
-                                    size="sm"
-                                  >
-                                    {isExpanded ? (
-                                      <>
-                                        <ChevronUp className="w-4 h-4 mr-1" />
-                                        Hide Types
-                                      </>
-                                    ) : (
-                                      <>
-                                        <ChevronDown className="w-4 h-4 mr-1" />
-                                        Question Types
-                                      </>
-                                    )}
-                                  </Button>
+                            ) : (
+                              <div 
+                                className="flex items-center gap-4 w-full cursor-pointer hover:bg-accent/50 rounded-md p-2 -m-2 transition-colors"
+                                onClick={() => handleChapterClick(chapter.name)}
+                              >
+                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                                  <BookOpen className="w-5 h-5" />
                                 </div>
-                              )}
-                            </div>
+                                <div className="flex-1 min-w-0">
+                                  <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                    {chapter.name}
+                                  </h3>
+                                  <div className="mt-1">
+                                    <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                  </div>
+                                </div>
+                                <div className="flex-shrink-0">
+                                  {isExpanded ? (
+                                    <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                                  )}
+                                </div>
+                              </div>
+                            )}
                             
                             {/* Question Types Dropdown */}
                             {paperMode !== 'chapter' && isExpanded && (
-                              <div className="mt-4 pl-14 border-t pt-4">
+                              <div className="mt-4 border-t pt-4">
                                 {isLoadingTypes ? (
                                   <div className="text-center py-4">
                                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>

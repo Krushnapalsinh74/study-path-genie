@@ -385,20 +385,48 @@ const StudentPortal = () => {
 
   const ensurePdfUnicodeFont = async (doc: jsPDF) => {
     if (pdfFontReady) {
-      try { doc.setFont('NotoSansGujarati'); } catch {}
-      return;
+      try { 
+        doc.setFont('NotoSansGujarati');
+        return true;
+      } catch {
+        // Font was marked ready but failed to set, reset and try again
+        setPdfFontReady(false);
+      }
     }
+    
     try {
       const res = await fetch('/fonts/NotoSansGujarati-Regular.ttf');
       if (!res.ok) throw new Error('Font not found');
       const buf = await res.arrayBuffer();
+      
+      // Validate buffer
+      if (!buf || buf.byteLength === 0) {
+        throw new Error('Invalid font buffer');
+      }
+      
       const base64 = arrayBufferToBase64(buf);
+      
+      // Validate base64
+      if (!base64) {
+        throw new Error('Failed to convert font to base64');
+      }
+      
       doc.addFileToVFS('NotoSansGujarati-Regular.ttf', base64);
       doc.addFont('NotoSansGujarati-Regular.ttf', 'NotoSansGujarati', 'normal');
+      
+      // Test if font was added successfully
       doc.setFont('NotoSansGujarati');
       setPdfFontReady(true);
+      return true;
     } catch (e) {
-      console.warn('Unicode font load failed, falling back to HTML renderer for complex scripts.', e);
+      console.warn('Unicode font load failed, using default font:', e);
+      try {
+        doc.setFont('helvetica');
+      } catch {
+        // Fallback to absolute default
+        doc.setFont();
+      }
+      return false;
     }
   };
 
@@ -989,75 +1017,132 @@ const StudentPortal = () => {
 
   // PDF Generation function
   const generatePDF = async () => {
-    const fullText = [
-      examTitle,
-      schoolName,
-      selectedBoard?.name || '',
-      selectedStandard?.name || '',
-      selectedSubject?.name || '',
-      examInstructions,
-      ...selectedQuestions.map(q => q.question || (q as any).text || (q as any).content || '')
-    ].join(' ');
+    try {
+      const fullText = [
+        examTitle,
+        schoolName,
+        selectedBoard?.name || '',
+        selectedStandard?.name || '',
+        selectedSubject?.name || '',
+        examInstructions,
+        ...selectedQuestions.map(q => q.question || (q as any).text || (q as any).content || '')
+      ].join(' ');
 
-    const hasLatex = /(\$\$[^$]+\$\$|\$[^$]+\$)/.test(fullText);
-    if (containsComplexScript(fullText) || hasLatex) {
-      await generatePDFViaHTML();
-      return;
-    }
+      const hasLatex = /(\$\$[^$]+\$\$|\$[^$]+\$)/.test(fullText);
+      if (containsComplexScript(fullText) || hasLatex) {
+        await generatePDFViaHTML();
+        return;
+      }
 
-    const doc = new jsPDF();
+      const doc = new jsPDF();
 
-    await ensurePdfUnicodeFont(doc);
+      // Try to load Unicode font, but continue with default if it fails
+      const fontLoaded = await ensurePdfUnicodeFont(doc);
+      
+      // Set a safe default font
+      if (!fontLoaded) {
+        try {
+          doc.setFont('helvetica', 'normal');
+        } catch {
+          // Use absolute default
+          doc.setFontSize(12);
+        }
+      }
 
-    // Header Layout
-    doc.setFontSize(16);
-    doc.text(examTitle || 'Question Paper', 105, 18, { align: 'center' });
+      // Header Layout
+      doc.setFontSize(16);
+      doc.text(examTitle || 'Question Paper', 105, 18, { align: 'center' });
 
-    doc.setFontSize(11);
-    const headerLines = [
-      schoolName ? `School: ${schoolName}` : null,
-      selectedBoard?.name ? `Board: ${selectedBoard?.name}` : null,
-      selectedStandard?.name ? `Standard: ${selectedStandard?.name}` : null,
-      selectedSubject?.name ? `Subject: ${selectedSubject?.name}` : null,
-      examDuration ? `Duration: ${examDuration}` : null,
-    ].filter(Boolean) as string[];
+      doc.setFontSize(11);
+      const headerLines = [
+        schoolName ? `School: ${schoolName}` : null,
+        selectedBoard?.name ? `Board: ${selectedBoard?.name}` : null,
+        selectedStandard?.name ? `Standard: ${selectedStandard?.name}` : null,
+        selectedSubject?.name ? `Subject: ${selectedSubject?.name}` : null,
+        examDuration ? `Duration: ${examDuration}` : null,
+      ].filter(Boolean) as string[];
 
-    let y = 26;
-    headerLines.forEach((line) => {
-      doc.text(line, 105, y, { align: 'center' });
-      y += 6;
-    });
+      let y = 26;
+      headerLines.forEach((line) => {
+        try {
+          doc.text(line, 105, y, { align: 'center' });
+        } catch (e) {
+          console.warn('Failed to add header line:', line, e);
+          // Try without alignment
+          try {
+            doc.text(line, 20, y);
+          } catch {
+            console.warn('Skipping problematic header line:', line);
+          }
+        }
+        y += 6;
+      });
 
-    // Instructions box
-    if (examInstructions) {
-      const maxWidth = 170;
-      const split = doc.splitTextToSize(`Instructions: ${examInstructions}`, maxWidth);
-      doc.setFontSize(10);
-      doc.text(split, 20, y);
-      y += split.length * 5 + 6;
-    }
+      // Instructions box
+      if (examInstructions) {
+        try {
+          const maxWidth = 170;
+          const split = doc.splitTextToSize(`Instructions: ${examInstructions}`, maxWidth);
+          doc.setFontSize(10);
+          doc.text(split, 20, y);
+          y += split.length * 5 + 6;
+        } catch (e) {
+          console.warn('Failed to add instructions:', e);
+          y += 15; // Skip space for instructions
+        }
+      }
 
     const writeSectionPdf = (title: string, items: any[]) => {
       if (items.length === 0) return;
-      doc.setFontSize(12);
-      doc.text(title, 20, y);
-      y += 8;
-      items.forEach((question, idx) => {
-        if (y > 270) {
-          doc.addPage();
-          y = 20;
-          try { doc.setFont('NotoSansGujarati'); } catch {}
-        }
-        const qText = question.question || (question as any).text || (question as any).content || "[No question text]";
-        const split = doc.splitTextToSize(`Q${idx + 1}. ${qText}`, 170);
-        doc.text(split, 20, y);
-        y += split.length * 6;
-        doc.setFontSize(9);
-        doc.text(`Marks: ${question.marks ?? '-' } • Difficulty: ${question.difficulty ?? '-' } • Type: ${question.type ?? '-' }`, 20, y);
-        y += 10;
+      
+      try {
         doc.setFontSize(12);
-      });
-      y += 6;
+        doc.text(title, 20, y);
+        y += 8;
+        
+        items.forEach((question, idx) => {
+          if (y > 270) {
+            doc.addPage();
+            y = 20;
+            // Try to set font but don't fail if it doesn't work
+            try { 
+              doc.setFont('NotoSansGujarati'); 
+            } catch { 
+              try {
+                doc.setFont('helvetica');
+              } catch {
+                // Continue with default font
+              }
+            }
+          }
+          
+          try {
+            const qText = question.question || (question as any).text || (question as any).content || "[No question text]";
+            const split = doc.splitTextToSize(`Q${idx + 1}. ${qText}`, 170);
+            doc.text(split, 20, y);
+            y += split.length * 6;
+            
+            doc.setFontSize(9);
+            doc.text(`Marks: ${question.marks ?? '-' } • Difficulty: ${question.difficulty ?? '-' } • Type: ${question.type ?? '-' }`, 20, y);
+            y += 10;
+            doc.setFontSize(12);
+          } catch (e) {
+            console.warn(`Failed to add question ${idx + 1}:`, e);
+            // Add fallback text
+            try {
+              doc.text(`Q${idx + 1}. [Question content error]`, 20, y);
+              y += 10;
+            } catch {
+              // Skip this question entirely
+              console.warn(`Skipping question ${idx + 1} due to rendering error`);
+            }
+          }
+        });
+        y += 6;
+      } catch (e) {
+        console.warn(`Failed to write section ${title}:`, e);
+        y += 20; // Skip space for this section
+      }
     };
 
     if (customSections.length > 0) {
@@ -1085,27 +1170,60 @@ const StudentPortal = () => {
 
     const chapterPart = Array.isArray(selectedChapter) ? selectedChapter.join('-') : (selectedChapter || 'All');
     const fileName = `${selectedSubject?.name || 'Subject'}_${chapterPart}_Question_Paper.pdf`;
-    doc.save(fileName);
+    
+    try {
+      doc.save(fileName);
+      
+      // Save paper to localStorage
+      const paperData = {
+        title: examTitle || 'Question Paper',
+        subject: selectedSubject?.name || '',
+        board: selectedBoard?.name || 'General',
+        standard: selectedStandard?.name || 'General',
+        type: paperMode || 'Custom',
+        difficulty: selectedQuestionType || undefined,
+        chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
+        totalQuestions: selectedQuestions.length,
+        totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
+      };
+      savePaperToStorage(paperData);
 
-    // Save paper to localStorage
-    const paperData = {
-      title: examTitle || 'Question Paper',
-      subject: selectedSubject?.name || '',
-      board: selectedBoard?.name || 'General',
-      standard: selectedStandard?.name || 'General',
-      type: paperMode || 'Custom',
-      difficulty: selectedQuestionType || undefined,
-      chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
-      totalQuestions: selectedQuestions.length,
-      totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
-    };
-    savePaperToStorage(paperData);
-
+      toast({
+        title: "PDF Downloaded",
+        description: `Question paper saved as ${fileName}`,
+      });
+    } catch (saveError) {
+      console.error('Failed to save PDF:', saveError);
+      toast({
+        title: "PDF Save Error",
+        description: "Failed to save PDF. Trying HTML version...",
+        variant: "destructive",
+      });
+      
+      // Fallback to HTML version
+      await generatePDFViaHTML();
+    }
+  } catch (error) {
+    console.error('PDF Generation Error:', error);
     toast({
-      title: "PDF Downloaded",
-      description: `Question paper saved as ${fileName}`,
+      title: "PDF Generation Error",
+      description: "Failed to generate PDF. Trying HTML version...",
+      variant: "destructive",
     });
-  };
+    
+    // Fallback to HTML version
+    try {
+      await generatePDFViaHTML();
+    } catch (htmlError) {
+      console.error('HTML PDF Generation also failed:', htmlError);
+      toast({
+        title: "PDF Generation Failed",
+        description: "Both PDF generation methods failed. Please try again.",
+        variant: "destructive",
+      });
+    }
+  }
+};
 
   // Helper to normalize question objects from API to our shape (deduped)
 
@@ -3710,41 +3828,38 @@ const StudentPortal = () => {
                             
                             {/* Question Types Dropdown */}
                             {paperMode !== 'chapter' && isExpanded && (
-                              <div className="mt-4 border-t pt-4">
+                              <div className="mt-3 mx-2">
                                 {isLoadingTypes ? (
-                                  <div className="text-center py-4">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto"></div>
-                                    <p className="text-sm text-muted-foreground mt-2">Loading question types...</p>
+                                  <div className="flex items-center justify-center py-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
+                                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-indigo-200 border-t-indigo-500"></div>
+                                    <p className="text-xs text-indigo-600 ml-2 font-medium">Loading types...</p>
                                   </div>
                                 ) : types.length > 0 ? (
-                                  <div>
-                                    <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Available Question Types:</h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-3 shadow-sm border border-gray-100">
+                                    <div className="flex flex-wrap gap-1.5">
                                       {types.map((type, typeIndex) => (
-                                        <Button
+                                        <button
                                           key={typeIndex}
                                           onClick={() => {
                                             setSelectedChapter(chapter.name);
                                             setSelectedQuestionType(type);
                                             setCurrentStep("question-selection");
                                           }}
-                                          variant="outline"
-                                          size="sm"
-                                          className="justify-start h-auto p-3 hover:bg-primary/5"
+                                          className="group relative inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-full bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 transition-all duration-200 shadow-sm hover:shadow-md transform hover:scale-105"
                                         >
-                                          <div className="text-left">
-                                            <div className="font-medium">{type}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                              {chapterQuestions.filter(q => q.type === type).length} questions
-                                            </div>
-                                          </div>
-                                        </Button>
+                                          <span className="text-gray-700 group-hover:text-indigo-700 transition-colors">
+                                            {type}
+                                          </span>
+                                          <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-gray-100 group-hover:bg-indigo-100 text-gray-600 group-hover:text-indigo-600 rounded-full transition-colors">
+                                            {chapterQuestions.filter(q => q.type === type).length}
+                                          </span>
+                                        </button>
                                       ))}
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="text-center py-4">
-                                    <p className="text-sm text-muted-foreground">No question types available</p>
+                                  <div className="flex items-center justify-center py-4 bg-gray-50 rounded-lg">
+                                    <p className="text-xs text-gray-500">No question types available</p>
                                   </div>
                                 )}
                               </div>

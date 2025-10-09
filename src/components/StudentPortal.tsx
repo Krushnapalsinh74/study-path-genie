@@ -102,6 +102,7 @@ const StudentPortal = () => {
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
   const [selectedChapterNames, setSelectedChapterNames] = useState<string[]>([]);
+  const [selectedChapterIds, setSelectedChapterIds] = useState<number[]>([]);
   const [showChapterPaper, setShowChapterPaper] = useState(false);
   const [multiChapterLoading, setMultiChapterLoading] = useState(false);
 
@@ -125,12 +126,12 @@ const StudentPortal = () => {
   const navigate = useNavigate();
 
   // Helper functions for chapter expansion and question type loading
-  const loadQuestionTypes = async (chapterName: string) => {
+  const loadQuestionTypes = async (chapterName: string, chapterId?: number) => {
     if (chapterQuestionTypes[chapterName]?.length > 0) return; // Already loaded
     
     setLoadingTypes(prev => ({ ...prev, [chapterName]: true }));
     try {
-      const questions = await fetchQuestions(selectedSubject.id!, chapterName);
+      const questions = await fetchQuestions(selectedSubject.id!, chapterName, chapterId);
       const types = [...new Set(questions.map(q => q.type))];
       setChapterQuestionTypes(prev => ({ ...prev, [chapterName]: types }));
     } catch (error) {
@@ -140,20 +141,155 @@ const StudentPortal = () => {
     }
   };
 
-  const handleChapterClick = (chapterName: string) => {
+  const handleChapterClick = (chapterName: string, chapterId?: number) => {
     if (paperMode === 'chapter') return; // Skip for multi-chapter mode
     
     const isCurrentlyExpanded = expandedChapters[chapterName];
     setExpandedChapters(prev => ({ ...prev, [chapterName]: !isCurrentlyExpanded }));
     
     if (!isCurrentlyExpanded) {
-      loadQuestionTypes(chapterName);
+      loadQuestionTypes(chapterName, chapterId);
     }
   };
 
   // Base URLs for services
   const OTP_BASE_URL = "https://08m8v685-3000.inc1.devtunnels.ms";
   const ADMIN_BASE_URL = "https://08m8v685-3002.inc1.devtunnels.ms";
+
+  // Check API connectivity with multiple fallback approaches
+  const checkApiConnectivity = async (): Promise<{ isOnline: boolean; error?: string }> => {
+    const healthEndpoints = [
+      '/api/health',
+      '/api/boards', // Try a known endpoint as fallback
+      '/health',     // Alternative health endpoint
+      '/'           // Root endpoint as last resort
+    ];
+    
+    for (const endpoint of healthEndpoints) {
+      try {
+        console.log(`🔍 Checking API connectivity at ${endpoint}...`);
+        
+        // Use AbortController for proper timeout handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // Shorter timeout for health checks
+        
+        const response = await fetch(`${ADMIN_BASE_URL}${endpoint}`, { 
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          // Check if response is actually JSON and not HTML
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            console.log(`✅ API server is running and responding with JSON at ${endpoint}`);
+            return { isOnline: true };
+          } else if (endpoint === '/api/boards' || endpoint === '/api/health') {
+            // For API endpoints, we expect JSON. If we get HTML, that's a problem
+            console.warn(`⚠️ API endpoint ${endpoint} is responding but not with JSON content`);
+            continue; // Try next endpoint
+          } else {
+            // For root endpoint, any response (even HTML) indicates server is running
+            console.log(`✅ Server is responding at ${endpoint} (non-JSON but server is alive)`);
+            return { isOnline: true };
+          }
+        } else if (response.status === 404 && endpoint !== '/') {
+          // 404 for specific endpoints is OK, just means that endpoint doesn't exist
+          console.log(`📝 Endpoint ${endpoint} not found (404), trying next...`);
+          continue;
+        } else {
+          console.warn(`⚠️ Server responded with error at ${endpoint}:`, response.status);
+          continue;
+        }
+      } catch (error) {
+        console.log(`❌ Cannot connect to ${endpoint}:`, error);
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.log(`⏰ Timeout connecting to ${endpoint}`);
+        }
+        continue; // Try next endpoint
+      }
+    }
+    
+    // If we get here, none of the endpoints worked
+    return { 
+      isOnline: false, 
+      error: "Could not connect to API server on any endpoint. Server may be down or unreachable." 
+    };
+  };
+
+  // Retry utility function with exponential backoff
+  const retryWithBackoff = async (
+    operation: () => Promise<any>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000
+  ): Promise<any> => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        console.log(`⚠️ Attempt ${attempt}/${maxRetries} failed:`, error);
+        
+        if (attempt === maxRetries) {
+          throw error; // Re-throw the last error if all attempts failed
+        }
+        
+        // Calculate delay with exponential backoff
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        console.log(`⏳ Retrying in ${delay}ms...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    throw new Error('Retry attempts exhausted'); // This should never be reached
+  };
+
+  // Helper function to fetch questions from multiple chapters efficiently
+  const fetchQuestionsFromChapters = async (chapterIds: number[]): Promise<Question[]> => {
+    console.log("🔄 Fetching questions from multiple chapters:", chapterIds);
+    
+    if (chapterIds.length === 0) {
+      return [];
+    }
+    
+    if (chapterIds.length === 1) {
+      // For single chapter, use the direct chapter endpoint
+      return await fetchQuestions(0, undefined, chapterIds[0]); // subjectId not needed for chapter endpoint
+    }
+    
+    // For multiple chapters, fetch from each chapter endpoint and combine
+    const allQuestions: Question[] = [];
+    const errors: string[] = [];
+    
+    for (const chapterId of chapterIds) {
+      try {
+        console.log(`📚 Fetching questions from chapter ID: ${chapterId}`);
+        const questions = await fetchQuestions(0, undefined, chapterId);
+        allQuestions.push(...questions);
+        console.log(`✅ Got ${questions.length} questions from chapter ${chapterId}`);
+      } catch (error) {
+        console.error(`❌ Failed to fetch questions from chapter ${chapterId}:`, error);
+        errors.push(`Chapter ${chapterId}: ${error}`);
+      }
+    }
+    
+    if (errors.length > 0 && allQuestions.length === 0) {
+      throw new Error(`Failed to fetch questions from all chapters:\n${errors.join('\n')}`);
+    }
+    
+    if (errors.length > 0) {
+      console.warn(`⚠️ Some chapters failed to load: ${errors.join(', ')}`);
+    }
+    
+    console.log(`🎯 Total questions fetched from ${chapterIds.length} chapters: ${allQuestions.length}`);
+    return allQuestions;
+  };
 
   // Function to save paper to localStorage
   const savePaperToStorage = (paperData: {
@@ -290,6 +426,7 @@ const StudentPortal = () => {
   const [standardQuery, setStandardQuery] = useState("");
   const [chapterQuery, setChapterQuery] = useState("");
   const [targetTotalMarks, setTargetTotalMarks] = useState<number>(50);
+  const [targetTotalQuestions, setTargetTotalQuestions] = useState<number>(20);
   // Chapter-mode now generates PDF with all questions from selected chapters
   
   // Payment related state
@@ -366,6 +503,32 @@ const StudentPortal = () => {
     }
   }, [showPaymentModal]);
 
+  // Function to handle going back and clearing selections
+  const handleGoBack = (targetStep: string) => {
+    // Clear selected questions when going back from question-selection or paper-review
+    if (currentStep === "question-selection" || currentStep === "paper-review") {
+      console.log("🔄 Going back - clearing selected questions");
+      setSelectedQuestions([]);
+    }
+    
+    // Reset other relevant states
+    if (targetStep === "chapter-selection") {
+      // Don't clear chapterQuestions - keep them so user can see the count
+      setSelectedQuestionType("");
+    }
+    
+    if (targetStep === "paper-options") {
+      setSelectedChapter("");
+      setSelectedQuestionType("");
+      setChapterQuestions([]);
+      // Also clear the chapter dropdown states
+      setExpandedChapters({});
+      setChapterQuestionTypes({});
+    }
+    
+    setCurrentStep(targetStep);
+  };
+
   // Load Unicode font for PDFs (e.g., Gujarati)
   const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
     let binary = '';
@@ -424,7 +587,7 @@ const StudentPortal = () => {
         doc.setFont('helvetica');
       } catch {
         // Fallback to absolute default
-        doc.setFont();
+        doc.setFont('helvetica', 'normal');
       }
       return false;
     }
@@ -1346,39 +1509,124 @@ const StudentPortal = () => {
   };
 
   // Fetch questions for selected subject from API
-  const fetchQuestions = async (subjectId: number, chapterName?: string) => {
+  const fetchQuestions = async (subjectId: number, chapterName?: string, chapterId?: number) => {
     setLoadingQuestions(true);
     setError("");
     
+    // Initialize health warning variable outside try block for scope access
+    let healthWarning = "";
+    
     try {
-      console.log("🔄 Fetching questions from API for subject:", subjectId, "chapter:", chapterName || "ALL");
+      console.log("🔄 Fetching questions from API for subject:", subjectId, "chapter:", chapterName || "ALL", "chapterId:", chapterId);
+      console.log("🌐 Using API base URL:", ADMIN_BASE_URL);
       
-      // Try chapter-specific endpoint first if chapterName is provided
+      // First, check if API server is accessible (but don't fail completely if uncertain)
+      console.log("🔍 Checking API server connectivity...");
+      let serverReachable = true;
+      
+      try {
+        const apiStatus = await retryWithBackoff(
+          () => checkApiConnectivity(),
+          2, // Only 2 retries for health check
+          1000 // 1 second base delay
+        );
+        
+        if (!apiStatus.isOnline) {
+          console.warn("⚠️ Health check failed, but attempting to proceed:", apiStatus.error);
+          healthWarning = `Health check failed: ${apiStatus.error}`;
+          // Don't throw here - let's try the actual request and see what happens
+        }
+      } catch (healthError) {
+        console.warn("⚠️ Health check error, but attempting to proceed:", healthError);
+        healthWarning = `Health check error: ${healthError}`;
+        // Continue anyway - the actual API endpoint might work even if health check fails
+      }
+      
+      // Prefer chapterId-based endpoint if available
       let url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
-      if (chapterName) {
-        // Try chapter-specific endpoint
+      if (chapterId) {
+        // Use the direct chapters endpoint with chapterId
+        url = `${ADMIN_BASE_URL}/api/chapters/${chapterId}/questions`;
+        console.log("📡 Using direct chapters endpoint:", url);
+      } else if (chapterName) {
+        // Fallback to chapter name-based endpoint
         url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/chapters/${encodeURIComponent(chapterName)}/questions`;
+        console.log("📡 Using chapterName-based endpoint:", url);
       }
       
-      let response = await fetch(url);
+      console.log("📡 Making request to:", url);
       
-      // If chapter-specific endpoint fails, fall back to all questions and filter
-      if (!response.ok && chapterName) {
-        console.log("📝 Chapter-specific endpoint failed, fetching all questions and filtering...");
-        url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
-        response = await fetch(url);
-      }
+      // Create fetch operation with proper error handling
+      const fetchOperation = async () => {
+        // Use AbortController for timeout handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
+        let response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        // If chapter-specific endpoint fails, fall back to all questions and filter
+        if (!response.ok && (chapterName || chapterId)) {
+          console.log("📝 Chapter-specific endpoint failed, fetching all questions and filtering...");
+          const fallbackUrl = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/questions`;
+          console.log("📡 Fallback request to:", fallbackUrl);
+          
+          const fallbackController = new AbortController();
+          const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 10000);
+          
+          response = await fetch(fallbackUrl, {
+            signal: fallbackController.signal,
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          clearTimeout(fallbackTimeoutId);
+        }
+        
+        return response;
+      };
+      
+      // Execute fetch with retry logic
+      const response = await retryWithBackoff(fetchOperation, 3, 1000);
+      
+      console.log("📊 Response status:", response.status, response.statusText);
+      console.log("📝 Response headers:", Object.fromEntries(response.headers.entries()));
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch questions: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.error("❌ API Error Response:", errorText);
+        
+        // Check if it's a development server error page
+        if (errorText.includes("Vite") || errorText.includes("<!DOCTYPE")) {
+          throw new Error(`API endpoint not found or server misconfigured.\nURL: ${url}\nThe server returned a development page instead of API data.\n\nPlease check:\n1. Backend server is running\n2. API routes are properly configured\n3. CORS is enabled`);
+        }
+        
+        throw new Error(`Failed to fetch questions: ${response.status} ${response.statusText}\nResponse: ${errorText.substring(0, 200)}`);
       }
       
       // Check if response is actually JSON
       const contentType = response.headers.get("content-type");
+      console.log("📄 Content-Type:", contentType);
+      
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
         console.error("❌ Expected JSON but received:", contentType, text.substring(0, 200));
-        throw new Error("Server returned HTML instead of JSON. API endpoint may not exist or server error occurred.");
+        
+        // Check if it's a development server error page
+        if (text.includes("Vite") || text.includes("<!DOCTYPE")) {
+          throw new Error(`API endpoint not found or misconfigured.\nURL: ${url}\nReceived HTML development page instead of JSON data.\n\nThis usually means:\n1. The backend API server is not running\n2. The API endpoint doesn't exist\n3. There's a routing/proxy issue\n\nPlease start the backend server and ensure the API endpoints are configured correctly.`);
+        }
+        
+        throw new Error(`Server returned non-JSON response.\nExpected: application/json\nReceived: ${contentType}\n\nThis indicates the API endpoint may not exist or there's a server configuration issue.`);
       }
       
       const data = await response.json();
@@ -1387,16 +1635,22 @@ const StudentPortal = () => {
       let normalized = data.map(normalizeQuestion);
       
       // Filter by chapter if specified and we got all questions
-      if (chapterName && url.includes('/questions') && !url.includes('/chapters/')) {
-        console.log("🔍 Filtering questions by chapter:", chapterName);
+      if ((chapterName || chapterId) && url.includes('/questions') && !url.includes('/chapters/')) {
+        console.log("🔍 Filtering questions by chapter:", chapterName, "ID:", chapterId);
         console.log("📊 Total questions before filtering:", normalized.length);
         
         normalized = normalized.filter((q: Question) => {
           // Check various chapter field names that might exist in the API response
-          const questionChapter = q.chapter || q.chapterName || q.chapter_name || 
+          const questionChapter = q.chapter || (q as any).chapterName || (q as any).chapter_name || 
                                  (q as any).chapterTitle || (q as any).chapter_title;
+          const questionChapterId = (q as any).chapterId || (q as any).chapter_id;
           
-          if (questionChapter) {
+          // Try to match by ID first (more reliable), then by name
+          if (chapterId && questionChapterId) {
+            const matches = questionChapterId === chapterId;
+            console.log(`🔍 Question: "${q.question?.substring(0, 50)}..." | ChapterID: "${questionChapterId}" | Matches: ${matches}`);
+            return matches;
+          } else if (chapterName && questionChapter) {
             const matches = questionChapter.toLowerCase().trim() === chapterName.toLowerCase().trim();
             console.log(`🔍 Question: "${q.question?.substring(0, 50)}..." | Chapter: "${questionChapter}" | Matches: ${matches}`);
             return matches;
@@ -1406,14 +1660,18 @@ const StudentPortal = () => {
           return false;
         });
         
-        console.log(`🎯 Filtered to ${normalized.length} questions for chapter "${chapterName}"`);
+        console.log(`🎯 Filtered to ${normalized.length} questions for chapter "${chapterName}" (ID: ${chapterId})`);
         
         if (normalized.length === 0) {
-          console.warn(`⚠️ No questions found for chapter "${chapterName}". Available chapters in data:`);
+          console.warn(`⚠️ No questions found for chapter "${chapterName}" (ID: ${chapterId}). Available chapters in data:`);
           const availableChapters = [...new Set(data.map((q: any) => 
             q.chapter || q.chapterName || q.chapter_name || q.chapterTitle || q.chapter_title || 'No Chapter'
           ))];
+          const availableChapterIds = [...new Set(data.map((q: any) => 
+            q.chapterId || q.chapter_id || 'No ID'
+          ))];
           console.log("📋 Available chapters:", availableChapters);
+          console.log("📋 Available chapter IDs:", availableChapterIds);
         }
       }
       
@@ -1428,7 +1686,28 @@ const StudentPortal = () => {
       return normalized as Question[];
     } catch (error) {
       console.error("❌ Error fetching questions:", error);
-      setError("Failed to load questions. Please check your connection and try again.");
+      
+      // Provide specific error message based on the error type
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          setError("Request timed out. The server may be slow or unavailable. Please try again.");
+        } else if (error.message.includes("API server is not accessible")) {
+          setError("Backend server is not running or not accessible. Please ensure the server is started and try again.");
+        } else if (error.message.includes("API endpoint not found")) {
+          setError("The requested API endpoint was not found. Please check if the backend server is properly configured with the required routes.");
+        } else if (error.message.includes("HTML development page") || error.message.includes("Vite")) {
+          setError("API endpoint configuration issue detected. The server is returning a development page instead of API data. Please verify that:\n\n• Backend server is running\n• API routes are properly configured\n• CORS is enabled\n• The correct port is being used");
+        } else if (error.message.includes("Failed to fetch") || error.message.includes("network")) {
+          const baseError = "Network connection error. Please check your internet connection and server status.";
+          setError(healthWarning ? `${baseError}\n\nAdditional info: ${healthWarning}` : baseError);
+        } else {
+          const baseError = `Failed to load questions: ${error.message}`;
+          setError(healthWarning ? `${baseError}\n\nHealth check info: ${healthWarning}` : baseError);
+        }
+      } else {
+        const baseError = "Failed to load questions. Please check your connection and try again.";
+        setError(healthWarning ? `${baseError}\n\nHealth check info: ${healthWarning}` : baseError);
+      }
       
       // Return empty array instead of sample data
       if (chapterName) {
@@ -3504,6 +3783,7 @@ const StudentPortal = () => {
                     }
                     setPaperMode("chapter");
                     setSelectedChapterNames([]);
+                    setSelectedChapterIds([]);
                     try { await fetchChapters(selectedSubject.id); } catch {}
                     setCurrentStep("chapter-selection");
                   }}
@@ -3725,10 +4005,17 @@ const StudentPortal = () => {
           <Card className="shadow-card animate-fade-in">
             <CardHeader className="text-center">
               <CardTitle className="text-3xl font-bold text-foreground mb-2">
-                {paperMode === 'chapter' ? 'Select Chapters' : 'Select Chapter'}
+                {paperMode === 'random' ? 'Select Chapters for Random Paper' :
+                 paperMode === 'chapter' ? 'Select Multiple Chapters' : 
+                 'Select Chapter & Questions'}
               </CardTitle>
               <CardDescription>
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
+                {(paperMode === 'chapter' || paperMode === 'random') && selectedChapterNames.length > 0 && (
+                  <span className="block mt-1 text-sm font-medium text-green-600">
+                    {selectedChapterNames.length} chapter{selectedChapterNames.length !== 1 ? 's' : ''} selected
+                  </span>
+                )}
               </CardDescription>
               <Button
                 onClick={() => setCurrentStep("paper-options")}
@@ -3741,6 +4028,34 @@ const StudentPortal = () => {
             </CardHeader>
 
             <CardContent>
+              {/* Chapter Selection Mode Toggle - only for difficulty mode */}
+              {paperMode === 'difficulty' && (
+                <div className="mb-6 flex justify-center">
+                  <div className="bg-muted p-1 rounded-lg inline-flex">
+                    <button
+                      onClick={() => setPaperMode('difficulty')}
+                      className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                        paperMode === 'difficulty'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Single Chapter
+                    </button>
+                    <button
+                      onClick={() => setPaperMode('chapter')}
+                      className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
+                        paperMode === 'chapter'
+                          ? 'bg-background text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Multiple Chapters
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Search Chapters */}
               <div className="mb-4 max-w-md mx-auto relative">
                 <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
@@ -3770,7 +4085,7 @@ const StudentPortal = () => {
                           className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
                         >
                           <CardContent className="p-4">
-                            {paperMode === 'chapter' ? (
+                            {(paperMode === 'chapter' || paperMode === 'random') ? (
                               <div className="flex items-center gap-4 w-full">
                                 <Checkbox
                                   id={`chapter-${chapter.id}`}
@@ -3779,6 +4094,11 @@ const StudentPortal = () => {
                                     setSelectedChapterNames(prev => {
                                       const set = new Set(prev);
                                       if (checked) set.add(chapter.name); else set.delete(chapter.name);
+                                      return Array.from(set);
+                                    });
+                                    setSelectedChapterIds(prev => {
+                                      const set = new Set(prev);
+                                      if (checked) set.add(chapter.id); else set.delete(chapter.id);
                                       return Array.from(set);
                                     });
                                   }}
@@ -3795,7 +4115,7 @@ const StudentPortal = () => {
                             ) : (
                               <div 
                                 className="flex items-center gap-4 w-full cursor-pointer hover:bg-accent/50 rounded-md p-2 -m-2 transition-colors"
-                                onClick={() => handleChapterClick(chapter.name)}
+                                onClick={() => handleChapterClick(chapter.name, chapter.id)}
                               >
                                 <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
                                   <BookOpen className="w-5 h-5" />
@@ -3867,7 +4187,7 @@ const StudentPortal = () => {
                 </div>
               )}
 
-              {paperMode === 'chapter' && (
+              {(paperMode === 'chapter' || paperMode === 'random') && (
                 <div className="mt-6">
                   <div className="flex justify-end">
                     <Button
@@ -3875,33 +4195,48 @@ const StudentPortal = () => {
                       onClick={async () => {
                         try {
                           if (!selectedSubject?.id) return;
-                          // Fetch all questions from selected chapters
-                          const all: Question[] = [];
-                          for (const chName of selectedChapterNames) {
-                            const data = await fetchQuestions(selectedSubject.id!, chName);
-                            all.push(...data);
+                          
+                          if (paperMode === 'random') {
+                            // For random paper, go to configuration step
+                            setCurrentStep('random-config');
+                          } else {
+                            // For chapter mode, fetch all questions from selected chapters
+                            let all: Question[] = [];
+                            
+                            if (selectedChapterIds.length > 0) {
+                              // Use efficient chapter ID-based fetching
+                              all = await fetchQuestionsFromChapters(selectedChapterIds);
+                            } else {
+                              // Fallback: Use chapter names
+                              console.log("⚠️ No chapter IDs available, falling back to name-based fetch");
+                              for (const chName of selectedChapterNames) {
+                                const data = await fetchQuestions(selectedSubject.id!, chName);
+                                all.push(...data);
+                              }
+                            }
+                            
+                            const allowed = new Set(selectedChapterNames);
+                            const pool = all.filter(q => allowed.has(q.chapter) || selectedChapterNames.length === 0);
+                            if (pool.length === 0) {
+                              setError('No questions found in selected chapters.');
+                              return;
+                            }
+                            // Build types map and go to allocation screen
+                            const byType: Record<string, number> = {};
+                            pool.forEach(q => {
+                              const raw = (q.type || '').toString().trim();
+                              if (!raw) return; // skip questions without a type
+                              const t = raw.charAt(0).toUpperCase() + raw.slice(1); // pretty label (e.g., "text" -> "Text")
+                              byType[t] = (byType[t] || 0) + 1;
+                            });
+                            setSelectedChapter(selectedChapterNames.join(', '));
+                            setSelectedQuestions(pool); // pool retained; we will sample from it
+                            setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
+                            setCurrentStep('type-allocation');
                           }
-                          const allowed = new Set(selectedChapterNames);
-                          const pool = all.filter(q => allowed.has(q.chapter));
-                          if (pool.length === 0) {
-                            setError('No questions found in selected chapters.');
-                            return;
-                          }
-                          // Build types map and go to allocation screen
-                          const byType: Record<string, number> = {};
-                          pool.forEach(q => {
-                            const raw = (q.type || '').toString().trim();
-                            if (!raw) return; // skip questions without a type
-                            const t = raw.charAt(0).toUpperCase() + raw.slice(1); // pretty label (e.g., "text" -> "Text")
-                            byType[t] = (byType[t] || 0) + 1;
-                          });
-                          setSelectedChapter(selectedChapterNames.join(', '));
-                          setSelectedQuestions(pool); // pool retained; we will sample from it
-                          setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
-                          setCurrentStep('type-allocation');
                         } catch (e) {
                           console.error(e);
-                          setError('Failed to generate PDF from selected chapters.');
+                          setError('Failed to process selected chapters.');
                         }
                       }}
                       className="bg-academic-blue hover:bg-academic-blue/90"
@@ -3914,6 +4249,180 @@ const StudentPortal = () => {
 
               {error && (
                 <Alert variant="destructive" className="mt-4">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentStep === 'random-config') {
+    return (
+      <div className="min-h-screen bg-gradient-background p-4">
+        <div className="max-w-4xl mx-auto">
+          <Card className="shadow-card animate-fade-in">
+            <CardHeader className="text-center">
+              <CardTitle className="text-3xl font-bold text-foreground mb-2">
+                Configure Random Paper
+              </CardTitle>
+              <CardDescription>
+                {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
+                <span className="block mt-1 text-sm font-medium text-green-600">
+                  Selected chapters: {selectedChapterNames.join(', ')}
+                </span>
+              </CardDescription>
+              <Button
+                onClick={() => setCurrentStep("chapter-selection")}
+                variant="ghost"
+                className="mt-2"
+              >
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Change Chapters
+              </Button>
+            </CardHeader>
+
+            <CardContent className="space-y-6">
+              {/* Paper Configuration */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="totalQuestions">Total Questions</Label>
+                  <Input
+                    id="totalQuestions"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={targetTotalQuestions}
+                    onChange={(e) => setTargetTotalQuestions(Math.max(1, parseInt(e.target.value || '10', 10)))}
+                    placeholder="e.g., 20"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="totalMarks">Total Marks</Label>
+                  <Input
+                    id="totalMarks"
+                    type="number"
+                    min={1}
+                    value={targetTotalMarks}
+                    onChange={(e) => setTargetTotalMarks(Math.max(1, parseInt(e.target.value || '50', 10)))}
+                    placeholder="e.g., 50"
+                  />
+                </div>
+              </div>
+
+              {/* Paper Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="examTitle">Exam Title</Label>
+                  <Input
+                    id="examTitle"
+                    value={examTitle}
+                    onChange={(e) => setExamTitle(e.target.value)}
+                    placeholder="e.g., Random Question Paper"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="duration">Duration</Label>
+                  <Input
+                    id="duration"
+                    value={examDuration}
+                    onChange={(e) => setExamDuration(e.target.value)}
+                    placeholder="e.g., 2 Hours"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="schoolName">School/Institute</Label>
+                <Input
+                  id="schoolName"
+                  value={schoolName}
+                  onChange={(e) => setSchoolName(e.target.value)}
+                  placeholder="e.g., Springfield High School"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="instructions">Instructions</Label>
+                <Input
+                  id="instructions"
+                  value={examInstructions}
+                  onChange={(e) => setExamInstructions(e.target.value)}
+                  placeholder="e.g., Answer all questions. Time: 2 hours"
+                />
+              </div>
+
+              {/* Generate Button */}
+              <div className="flex justify-end space-x-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentStep("chapter-selection")}
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={async () => {
+                    try {
+                      if (!selectedSubject?.id) return;
+                      
+                      console.log("🎲 Generating random paper from chapters:", selectedChapterNames);
+                      console.log("🎲 Using chapter IDs:", selectedChapterIds);
+                      
+                      let allQuestions: Question[] = [];
+                      
+                      if (selectedChapterIds.length > 0) {
+                        // Use efficient chapter ID-based fetching
+                        allQuestions = await fetchQuestionsFromChapters(selectedChapterIds);
+                      } else {
+                        // Fallback: Fetch all questions from the subject first (old behavior)
+                        console.log("⚠️ No chapter IDs available, falling back to subject-wide fetch");
+                        allQuestions = await fetchQuestions(selectedSubject.id!);
+                        
+                        // Filter questions by selected chapters
+                        allQuestions = allQuestions.filter(q => {
+                          const questionChapter = q.chapter || (q as any).chapterName || (q as any).chapter_name;
+                          const matches = questionChapter && selectedChapterNames.some(selectedName => 
+                            questionChapter.toLowerCase().trim() === selectedName.toLowerCase().trim()
+                          );
+                          if (matches) {
+                            console.log(`✓ Including question from chapter: ${questionChapter}`);
+                          }
+                          return matches;
+                        });
+                      }
+                      
+                      console.log("🔍 Total questions available for random paper:", allQuestions.length);
+                      
+                      if (allQuestions.length === 0) {
+                        setError(`No questions found in selected chapters: ${selectedChapterNames.join(', ')}. Please check if the API contains questions for these chapters.`);
+                        return;
+                      }
+                      
+                      // Generate random selection based on target
+                      const shuffled = [...allQuestions].sort(() => Math.random() - 0.5);
+                      const requestedCount = Math.min(targetTotalQuestions, shuffled.length);
+                      const selected = shuffled.slice(0, requestedCount);
+                      
+                      console.log(`🎯 Selected ${selected.length} random questions out of ${allQuestions.length} available`);
+                      
+                      setSelectedChapter(selectedChapterNames.join(', '));
+                      setSelectedQuestions(selected);
+                      setCurrentStep('paper-review');
+                    } catch (e) {
+                      console.error('❌ Error generating random paper:', e);
+                      setError('Failed to generate random paper. Please try again or check your internet connection.');
+                    }
+                  }}
+                  className="bg-academic-blue hover:bg-academic-blue/90"
+                >
+                  Generate Random Paper
+                </Button>
+              </div>
+
+              {error && (
+                <Alert variant="destructive">
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
@@ -4044,7 +4553,7 @@ const StudentPortal = () => {
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name} - {selectedChapter} - {selectedQuestionType}
               </CardDescription>
               <Button
-                onClick={() => setCurrentStep("chapter-selection")}
+                onClick={() => handleGoBack("chapter-selection")}
                 variant="ghost"
                 className="mt-2"
               >
@@ -4129,7 +4638,7 @@ const StudentPortal = () => {
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
               </CardDescription>
               <Button
-                onClick={() => setCurrentStep(paperMode === 'random' ? 'paper-options' : 'question-selection')}
+                onClick={() => handleGoBack(paperMode === 'random' ? 'paper-options' : 'question-selection')}
                 variant="ghost"
                 className="mt-2 text-sm"
               >

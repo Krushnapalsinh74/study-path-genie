@@ -302,6 +302,7 @@ const StudentPortal = () => {
     chapters?: string[];
     totalQuestions: number;
     totalMarks: number;
+    questions?: Question[]; // Add questions field
     pdfBlob?: Blob;
     pdfUrl?: string;
   }) => {
@@ -747,6 +748,7 @@ const StudentPortal = () => {
         chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
         totalQuestions: selectedQuestions.length,
         totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
+        questions: selectedQuestions, // Include the actual questions
       };
       savePaperToStorage(paperData);
       
@@ -1348,6 +1350,7 @@ const StudentPortal = () => {
         chapters: selectedChapterNames.length > 0 ? selectedChapterNames : undefined,
         totalQuestions: selectedQuestions.length,
         totalMarks: selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0),
+        questions: selectedQuestions, // Include the actual questions
       };
       savePaperToStorage(paperData);
 

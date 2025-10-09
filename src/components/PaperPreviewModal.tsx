@@ -87,9 +87,9 @@ const PaperPreviewModal: React.FC<PaperPreviewModalProps> = ({
   const generateSampleQuestions = (count: number, type: string, difficulty?: string) => {
     return Array.from({ length: count }, (_, i) => ({
       id: i + 1,
-      question: `Sample ${type} Question ${i + 1}`,
-      text: `Sample ${type} Question ${i + 1}`,
-      content: `Sample ${type} Question ${i + 1}`,
+      question: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
+      text: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
+      content: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
       type: type,
       difficulty: difficulty || "medium",
       marks: Math.floor(paper.totalMarks / Math.max(count, 1)),

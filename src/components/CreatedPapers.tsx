@@ -34,6 +34,7 @@ interface CreatedPaper {
   totalQuestions: number;
   totalMarks: number;
   createdAt: string;
+  questions?: any[]; // Add questions field
   pdfBlob?: Blob;
   pdfUrl?: string;
 }
@@ -142,9 +143,9 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
       const generateSampleQuestions = (count: number, type: string, difficulty?: string) => {
         return Array.from({ length: count }, (_, i) => ({
           id: i + 1,
-          question: `Sample ${type} Question ${i + 1}`,
-          text: `Sample ${type} Question ${i + 1}`,
-          content: `Sample ${type} Question ${i + 1}`,
+          question: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
+          text: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
+          content: `[Sample ${type} Question ${i + 1} - Real questions will appear here when using actual API data]`,
           type: type,
           difficulty: difficulty || 'medium',
           marks: Math.floor(paper.totalMarks / count),
@@ -156,6 +157,7 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
       let questionsToPrint = paper.questions || [];
       
       if (questionsToPrint.length === 0) {
+        console.warn('No actual questions found for paper:', paper.title, 'Generating sample questions as fallback');
         // Generate sample questions based on paper type and total questions
         if (paper.type === 'Mixed') {
           const mcqCount = Math.ceil(paper.totalQuestions * 0.6);
@@ -167,6 +169,8 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
         } else {
           questionsToPrint = generateSampleQuestions(paper.totalQuestions, paper.type, paper.difficulty);
         }
+      } else {
+        console.log('Using actual questions for paper:', paper.title, 'Questions count:', questionsToPrint.length);
       }
 
       printWindow.document.write(`
@@ -244,18 +248,22 @@ export default function CreatedPapers({ onBack }: CreatedPapersProps) {
             
             <div class="questions-section">
               <h2>Questions</h2>
-              ${questionsToPrint.map((q, i) => `
+              ${questionsToPrint.map((q, i) => {
+                // Get the actual question text with better fallback handling
+                const questionText = q.question || q.text || q.content || `Question ${i + 1}`;
+                return `
                 <div class="question">
                   <div class="question-number">Q${i + 1}.</div>
-                  <div class="question-text">${q.question || q.text || q.content || `Sample question ${i + 1}`}</div>
+                  <div class="question-text">${questionText}</div>
                   <div class="question-meta">
-                    <strong>Type:</strong> ${q.type} | 
-                    <strong>Difficulty:</strong> ${q.difficulty} | 
+                    <strong>Type:</strong> ${q.type || 'General'} | 
+                    <strong>Difficulty:</strong> ${q.difficulty || 'Medium'} | 
                     <strong>Marks:</strong> ${q.marks || Math.floor(paper.totalMarks / paper.totalQuestions)}
                     ${q.chapter ? ` | <strong>Chapter:</strong> ${q.chapter}` : ''}
                   </div>
                 </div>
-              `).join('')}
+              `;
+              }).join('')}
             </div>
             
             <div style="margin-top: 40px; text-align: center; font-size: 12px; color: #666;">

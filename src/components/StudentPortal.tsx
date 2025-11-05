@@ -1779,62 +1779,68 @@ const StudentPortal = () => {
     }
   };
 
-  // Fetch topics for selected subject from API
-  const fetchTopics = async (subjectId: number, waitForChapters: boolean = false) => {
+  // Fetch topics from API for each chapter of the selected subject
+  const fetchTopics = async (subjectId: number) => {
     setLoadingTopics(true);
     setError("");
     
     try {
-      console.log("🔄 Fetching topics from API for subject:", subjectId);
-      // Try to fetch topics from API - adjust endpoint based on your API structure
-      const response = await fetch(`${ADMIN_BASE_URL}/api/subjects/${subjectId}/topics`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch topics: ${response.status} ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      console.log("✅ Topics fetched successfully:", data);
-      setTopics(data);
-    } catch (error) {
-      console.error("❌ Error fetching topics:", error);
-      // If topics API doesn't exist, generate topics from chapters as fallback
-      console.log("ℹ️ Topics API not available, generating topics from chapters");
-      
-      try {
-        // Wait a bit for chapters to load if needed
-        if (waitForChapters || chapters.length === 0) {
-          // Wait for chapters to be fetched (max 2 seconds)
-          let attempts = 0;
-          while (chapters.length === 0 && attempts < 20) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-          }
+      console.log("🔄 Fetching topics for subject via /subjects/{id}/topics:", subjectId);
+
+      const url = `${ADMIN_BASE_URL}/api/subjects/${subjectId}/topics`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
         }
-        
-        // If we have chapters, create topics from them
-        if (chapters.length > 0) {
-          const topicsFromChapters: Topic[] = chapters.flatMap((chapter) => [
-            { id: chapter.id * 100 + 1, name: `${chapter.name} - Topic 1`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
-            { id: chapter.id * 100 + 2, name: `${chapter.name} - Topic 2`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
-            { id: chapter.id * 100 + 3, name: `${chapter.name} - Topic 3`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
-          ]);
-          setTopics(topicsFromChapters);
-        } else {
-          // Generate sample topics if no chapters available
-          const sampleTopics = [
-            { id: 1, name: "Basic Concepts", subjectId: subjectId },
-            { id: 2, name: "Theory and Principles", subjectId: subjectId },
-            { id: 3, name: "Problem Solving", subjectId: subjectId },
-            { id: 4, name: "Advanced Applications", subjectId: subjectId },
-            { id: 5, name: "Practice Exercises", subjectId: subjectId }
-          ];
-          setTopics(sampleTopics);
-        }
-      } catch (fallbackError) {
-        console.error("❌ Error generating fallback topics:", fallbackError);
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("❌ Topics API (subject) returned non-JSON:", contentType, text.substring(0, 160));
+        setError("Topics API returned non-JSON response. Please check the API configuration.");
         setTopics([]);
+        return;
       }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ Failed to fetch subject topics: ${response.status} ${response.statusText}`, errorText);
+        setError(`Failed to fetch topics: ${response.status} ${response.statusText}`);
+        setTopics([]);
+        return;
+      }
+
+      const data = await response.json();
+      console.log("✅ Subject topics fetched:", Array.isArray(data) ? data.length : 0);
+
+      if (!Array.isArray(data)) {
+        console.warn("⚠️ Topics API (subject) returned unexpected format:", data);
+        setError("Topics API returned unexpected data format. Expected an array of topics.");
+        setTopics([]);
+        return;
+      }
+
+      // Map to Topic interface; attach chapter name when we can find it from current chapters list
+      const mappedTopics: Topic[] = data.map((topic: any) => {
+        const chapterId = topic.chapterId || topic.chapter_id || null;
+        const chapter = chapterId ? chapters.find(ch => Number(ch.id) === Number(chapterId)) : undefined;
+        return {
+          id: topic.id,
+          name: topic.name || topic.title || `Topic ${topic.id}`,
+          chapterId: chapterId ? Number(chapterId) : undefined,
+          chapterName: chapter?.name,
+          subjectId: subjectId,
+        } as Topic;
+      });
+
+      setTopics(mappedTopics);
+    } catch (error) {
+      console.error("❌ Error fetching topics from subject endpoint:", error);
+      const msg = error instanceof Error ? error.message : String(error);
+      setError(`Failed to fetch topics: ${msg}`);
+      setTopics([]);
     } finally {
       setLoadingTopics(false);
     }
@@ -2021,19 +2027,24 @@ const StudentPortal = () => {
   // Call fetchChapters when a subject is selected
   useEffect(() => {
     if (selectedSubject?.id) {
+      // Clear topics when subject changes
+      setTopics([]);
       fetchChapters(selectedSubject.id);
     }
   }, [selectedSubject]);
 
-  // Call fetchTopics after chapters are loaded
+  // Call fetchTopics when chapters are loaded for the selected subject
   useEffect(() => {
     if (selectedSubject?.id && chapters.length > 0) {
-      fetchTopics(selectedSubject.id, false);
-    } else if (selectedSubject?.id && chapters.length === 0 && !loadingChapters) {
-      // If chapters are not loading and we have no chapters, fetch topics anyway (will use sample)
-      fetchTopics(selectedSubject.id, false);
+      // Only fetch topics if chapters belong to the selected subject
+      const subjectChapters = chapters.filter(ch => ch.subjectId === selectedSubject.id);
+      if (subjectChapters.length > 0) {
+        // Clear and refetch topics when subject or chapters change
+        setTopics([]);
+        fetchTopics(selectedSubject.id);
+      }
     }
-  }, [selectedSubject, chapters.length]);
+  }, [selectedSubject?.id, chapters.length]);
 
   // Restore board and standard selections from localStorage on mount and when returning from other pages
   useEffect(() => {
@@ -4196,7 +4207,13 @@ const StudentPortal = () => {
                   ) : chapters.length > 0 ? (
                     <div className="space-y-3 w-full">
                       {chapters
-                        .filter((chapter) => chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase()))
+                        .filter((chapter) => {
+                          // Filter by selected subject
+                          const belongsToSubject = selectedSubject?.id ? chapter.subjectId === selectedSubject.id : true;
+                          // Filter by search query
+                          const matchesQuery = chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase());
+                          return belongsToSubject && matchesQuery;
+                        })
                         .sort((a, b) => a.name.localeCompare(b.name))
                         .map((chapter, index) => {
                           const isExpanded = expandedChapters[chapter.name] || false;
@@ -4324,12 +4341,44 @@ const StudentPortal = () => {
                   ) : topics.length > 0 ? (
                     <div className="space-y-3 w-full">
                       {topics
-                        .filter((topic) => topic.name.toLowerCase().includes(topicQuery.trim().toLowerCase()))
+                        // Deduplicate by ID first
+                        .filter((topic, index, self) => 
+                          index === self.findIndex(t => t.id === topic.id)
+                        )
+                        // Filter topics to only show those from chapters of the selected subject
+                        .filter((topic) => {
+                          if (!selectedSubject?.id) return false;
+                          
+                          // Get chapter IDs that belong ONLY to the selected subject
+                          // Convert to numbers to ensure proper comparison
+                          const subjectChapterIds = chapters
+                            .filter(ch => ch.subjectId === selectedSubject.id)
+                            .map(ch => Number(ch.id));
+                          
+                          // Convert topic chapterId to number for comparison
+                          const topicChapterIdNum = topic.chapterId ? Number(topic.chapterId) : null;
+                          
+                          console.log(`🔍 Filtering topic "${topic.name}" (chapterId: ${topic.chapterId}, as number: ${topicChapterIdNum})`);
+                          console.log(`📚 Subject ${selectedSubject.id} has chapters with IDs: [${subjectChapterIds.join(', ')}]`);
+                          
+                          // Only show topics that belong to chapters of the selected subject
+                          // Use strict number comparison
+                          const belongsToSubject = topicChapterIdNum !== null && subjectChapterIds.includes(topicChapterIdNum);
+                          
+                          if (!belongsToSubject) {
+                            console.log(`❌ Topic "${topic.name}" filtered out - chapterId ${topic.chapterId} (${typeof topic.chapterId}) not in subject ${selectedSubject.id} chapter IDs [${subjectChapterIds.join(', ')}]`);
+                          }
+                          
+                          // Also filter by search query
+                          const matchesQuery = topic.name.toLowerCase().includes(topicQuery.trim().toLowerCase());
+                          
+                          return belongsToSubject && matchesQuery;
+                        })
                         .sort((a, b) => a.name.localeCompare(b.name))
-                        .map((topic, index) => {
+                        .map((topic) => {
                           return (
                             <Card
-                              key={topic.id || index}
+                              key={`topic-${topic.id}-${topic.name}`}
                               className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
                             >
                               <CardContent className="p-4">
@@ -4446,7 +4495,31 @@ const StudentPortal = () => {
                               // For now, we'll fetch all questions and filter by topic (if topic field exists)
                               // In the future, this can be enhanced with a topic-specific API endpoint
                               console.log("📚 Fetching questions for topics:", selectedTopicNames);
-                              const allQuestions = await fetchQuestions(selectedSubject.id!);
+                              
+                              let allQuestions: Question[] = [];
+                              try {
+                                allQuestions = await fetchQuestions(selectedSubject.id!);
+                              } catch (fetchError) {
+                                console.error("❌ Error fetching questions for topics:", fetchError);
+                                // Try to fetch from chapters associated with topics as fallback
+                                const topicChapters = topics
+                                  .filter(t => selectedTopicNames.includes(t.name))
+                                  .map(t => t.chapterId)
+                                  .filter((id): id is number => id !== undefined);
+                                
+                                if (topicChapters.length > 0) {
+                                  console.log("🔄 Attempting to fetch questions from associated chapters:", topicChapters);
+                                  try {
+                                    allQuestions = await fetchQuestionsFromChapters(topicChapters);
+                                    console.log(`✅ Fetched ${allQuestions.length} questions from chapters associated with topics`);
+                                  } catch (chapterError) {
+                                    console.error("❌ Error fetching from chapters:", chapterError);
+                                    throw new Error(`Failed to fetch questions for topics. The API server may not be running. Please check your connection and try again.`);
+                                  }
+                                } else {
+                                  throw new Error(`Failed to fetch questions for topics. The API server may not be running. Please check your connection and try again.`);
+                                }
+                              }
                               
                               // Filter questions by selected topics
                               // Note: This assumes questions have a 'topic' field - adjust based on your API structure
@@ -4481,8 +4554,13 @@ const StudentPortal = () => {
                             setCurrentStep('type-allocation');
                           }
                         } catch (e) {
-                          console.error(e);
-                          setError(`Failed to process selected ${selectionMode === 'chapter' ? 'chapters' : 'topics'}.`);
+                          console.error('❌ Error processing selection:', e);
+                          const errorMessage = e instanceof Error ? e.message : String(e);
+                          if (errorMessage.includes('API server') || errorMessage.includes('endpoint')) {
+                            setError(errorMessage);
+                          } else {
+                            setError(`Failed to process selected ${selectionMode === 'chapter' ? 'chapters' : 'topics'}. ${errorMessage}`);
+                          }
                         }
                       }}
                       className="bg-academic-blue hover:bg-academic-blue/90"
@@ -4648,22 +4726,51 @@ const StudentPortal = () => {
                         console.log("🎲 Generating random paper from topics:", selectedTopicNames);
                         console.log("🎲 Using topic IDs:", selectedTopicIds);
                         
-                        // Fetch all questions and filter by topics
-                        allQuestions = await fetchQuestions(selectedSubject.id!);
-                        
-                        // Filter questions by selected topics
-                        const filtered = allQuestions.filter(q => {
-                          const questionTopic = (q as any).topic || (q as any).topicName;
-                          return questionTopic && selectedTopicNames.some(selectedName => 
-                            questionTopic.toLowerCase().trim() === selectedName.toLowerCase().trim()
-                          );
-                        });
-                        
-                        if (filtered.length > 0) {
-                          allQuestions = filtered;
+                        try {
+                          // Fetch all questions and filter by topics
+                          allQuestions = await fetchQuestions(selectedSubject.id!);
+                          
+                          // Filter questions by selected topics
+                          const filtered = allQuestions.filter(q => {
+                            const questionTopic = (q as any).topic || (q as any).topicName;
+                            return questionTopic && selectedTopicNames.some(selectedName => 
+                              questionTopic.toLowerCase().trim() === selectedName.toLowerCase().trim()
+                            );
+                          });
+                          
+                          if (filtered.length > 0) {
+                            allQuestions = filtered;
+                            console.log(`✅ Filtered ${allQuestions.length} questions from selected topics`);
+                          } else {
+                            console.log("⚠️ No questions found with topic field matching selected topics. Using all questions as fallback.");
+                            // If no questions match topics, use all questions (since topics might not be in the data)
+                            // This is acceptable because topics might be generated from chapters
+                          }
+                          
+                          setSelectedChapter(selectedTopicNames.join(', '));
+                        } catch (topicError) {
+                          console.error("❌ Error fetching questions for topics:", topicError);
+                          // If fetching all questions fails, try to fetch from chapters associated with topics
+                          // Get chapters that contain these topics
+                          const topicChapters = topics
+                            .filter(t => selectedTopicNames.includes(t.name))
+                            .map(t => t.chapterId)
+                            .filter((id): id is number => id !== undefined);
+                          
+                          if (topicChapters.length > 0) {
+                            console.log("🔄 Attempting to fetch questions from associated chapters:", topicChapters);
+                            try {
+                              allQuestions = await fetchQuestionsFromChapters(topicChapters);
+                              setSelectedChapter(selectedTopicNames.join(', '));
+                              console.log(`✅ Fetched ${allQuestions.length} questions from chapters associated with topics`);
+                            } catch (chapterError) {
+                              console.error("❌ Error fetching from chapters:", chapterError);
+                              throw new Error(`Failed to fetch questions for topics. The API server may not be running or the endpoint is not available. Please check your connection and try again.`);
+                            }
+                          } else {
+                            throw new Error(`Failed to fetch questions for topics. The API server may not be running or the endpoint is not available. Please check your connection and try again.`);
+                          }
                         }
-                        
-                        setSelectedChapter(selectedTopicNames.join(', '));
                       }
                       
                       console.log("🔍 Total questions available for random paper:", allQuestions.length);
@@ -4685,7 +4792,12 @@ const StudentPortal = () => {
                       setCurrentStep('paper-review');
                     } catch (e) {
                       console.error('❌ Error generating random paper:', e);
-                      setError('Failed to generate random paper. Please try again or check your internet connection.');
+                      const errorMessage = e instanceof Error ? e.message : String(e);
+                      if (errorMessage.includes('API server') || errorMessage.includes('endpoint') || errorMessage.includes('not found')) {
+                        setError(errorMessage);
+                      } else {
+                        setError(`Failed to generate random paper: ${errorMessage}. Please check your connection and try again.`);
+                      }
                     }
                   }}
                   className="bg-academic-blue hover:bg-academic-blue/90"

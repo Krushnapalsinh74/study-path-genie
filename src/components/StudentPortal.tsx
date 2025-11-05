@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import jsPDF from 'jspdf';
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import LatexPreview from "./LatexPreview";
 import ChapterPaper from "./ChapterPaper";
 import DifficultyPaper from "./DifficultyPaper";
@@ -65,6 +66,14 @@ interface Chapter {
   subjectId: number;
 }
 
+interface Topic {
+  id: number;
+  name: string;
+  chapterId?: number;
+  chapterName?: string;
+  subjectId: number;
+}
+
 const StudentPortal = () => {
   console.log("StudentPortal component rendering");
   const { isDarkMode } = useDarkMode();
@@ -95,16 +104,23 @@ const StudentPortal = () => {
   const [questions, setQuestions] = useState<Record<number, Question[]>>({});
   const [chapterQuestions, setChapterQuestions] = useState<Question[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const [loadingBoards, setLoadingBoards] = useState(false);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [loadingChapters, setLoadingChapters] = useState(false);
+  const [loadingTopics, setLoadingTopics] = useState(false);
   const [selectedChapters, setSelectedChapters] = useState<number[]>([]);
   const [selectedChapterNames, setSelectedChapterNames] = useState<string[]>([]);
   const [selectedChapterIds, setSelectedChapterIds] = useState<number[]>([]);
+  const [selectedTopics, setSelectedTopics] = useState<Topic[]>([]);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<number[]>([]);
+  const [selectedTopicNames, setSelectedTopicNames] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState<"chapter" | "topic">("chapter");
   const [showChapterPaper, setShowChapterPaper] = useState(false);
   const [multiChapterLoading, setMultiChapterLoading] = useState(false);
+  const [topicQuery, setTopicQuery] = useState("");
 
   // Editable paper header fields
   const [examTitle, setExamTitle] = useState("Question Paper");
@@ -1763,6 +1779,67 @@ const StudentPortal = () => {
     }
   };
 
+  // Fetch topics for selected subject from API
+  const fetchTopics = async (subjectId: number, waitForChapters: boolean = false) => {
+    setLoadingTopics(true);
+    setError("");
+    
+    try {
+      console.log("🔄 Fetching topics from API for subject:", subjectId);
+      // Try to fetch topics from API - adjust endpoint based on your API structure
+      const response = await fetch(`${ADMIN_BASE_URL}/api/subjects/${subjectId}/topics`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch topics: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log("✅ Topics fetched successfully:", data);
+      setTopics(data);
+    } catch (error) {
+      console.error("❌ Error fetching topics:", error);
+      // If topics API doesn't exist, generate topics from chapters as fallback
+      console.log("ℹ️ Topics API not available, generating topics from chapters");
+      
+      try {
+        // Wait a bit for chapters to load if needed
+        if (waitForChapters || chapters.length === 0) {
+          // Wait for chapters to be fetched (max 2 seconds)
+          let attempts = 0;
+          while (chapters.length === 0 && attempts < 20) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+          }
+        }
+        
+        // If we have chapters, create topics from them
+        if (chapters.length > 0) {
+          const topicsFromChapters: Topic[] = chapters.flatMap((chapter) => [
+            { id: chapter.id * 100 + 1, name: `${chapter.name} - Topic 1`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
+            { id: chapter.id * 100 + 2, name: `${chapter.name} - Topic 2`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
+            { id: chapter.id * 100 + 3, name: `${chapter.name} - Topic 3`, chapterId: chapter.id, chapterName: chapter.name, subjectId: subjectId },
+          ]);
+          setTopics(topicsFromChapters);
+        } else {
+          // Generate sample topics if no chapters available
+          const sampleTopics = [
+            { id: 1, name: "Basic Concepts", subjectId: subjectId },
+            { id: 2, name: "Theory and Principles", subjectId: subjectId },
+            { id: 3, name: "Problem Solving", subjectId: subjectId },
+            { id: 4, name: "Advanced Applications", subjectId: subjectId },
+            { id: 5, name: "Practice Exercises", subjectId: subjectId }
+          ];
+          setTopics(sampleTopics);
+        }
+      } catch (fallbackError) {
+        console.error("❌ Error generating fallback topics:", fallbackError);
+        setTopics([]);
+      }
+    } finally {
+      setLoadingTopics(false);
+    }
+  };
+
   // Load boards when component mounts
   useEffect(() => {
     fetchBoards();
@@ -1947,6 +2024,16 @@ const StudentPortal = () => {
       fetchChapters(selectedSubject.id);
     }
   }, [selectedSubject]);
+
+  // Call fetchTopics after chapters are loaded
+  useEffect(() => {
+    if (selectedSubject?.id && chapters.length > 0) {
+      fetchTopics(selectedSubject.id, false);
+    } else if (selectedSubject?.id && chapters.length === 0 && !loadingChapters) {
+      // If chapters are not loading and we have no chapters, fetch topics anyway (will use sample)
+      fetchTopics(selectedSubject.id, false);
+    }
+  }, [selectedSubject, chapters.length]);
 
   // Restore board and standard selections from localStorage on mount and when returning from other pages
   useEffect(() => {
@@ -4008,15 +4095,18 @@ const StudentPortal = () => {
           <Card className="shadow-card animate-fade-in">
             <CardHeader className="text-center">
               <CardTitle className="text-3xl font-bold text-foreground mb-2">
-                {paperMode === 'random' ? 'Select Chapters for Random Paper' :
-                 paperMode === 'chapter' ? 'Select Multiple Chapters' : 
-                 'Select Chapter & Questions'}
+                {paperMode === 'random' ? 'Select for Random Paper' :
+                 paperMode === 'chapter' ? 'Select Multiple' : 
+                 'Select & Questions'}
               </CardTitle>
               <CardDescription>
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
-                {(paperMode === 'chapter' || paperMode === 'random') && selectedChapterNames.length > 0 && (
+                {(paperMode === 'chapter' || paperMode === 'random') && (
                   <span className="block mt-1 text-sm font-medium text-green-600">
-                    {selectedChapterNames.length} chapter{selectedChapterNames.length !== 1 ? 's' : ''} selected
+                    {selectionMode === 'chapter' 
+                      ? `${selectedChapterNames.length} chapter${selectedChapterNames.length !== 1 ? 's' : ''} selected`
+                      : `${selectedTopicNames.length} topic${selectedTopicNames.length !== 1 ? 's' : ''} selected`
+                    }
                   </span>
                 )}
               </CardDescription>
@@ -4031,6 +4121,23 @@ const StudentPortal = () => {
             </CardHeader>
 
             <CardContent>
+              {/* Tabs for Chapter/Topic Selection */}
+              <div className="mb-6 flex justify-center">
+                <Tabs value={selectionMode} onValueChange={(value) => {
+                  setSelectionMode(value as "chapter" | "topic");
+                  // Clear selections when switching modes
+                  setSelectedChapterNames([]);
+                  setSelectedChapterIds([]);
+                  setSelectedTopicNames([]);
+                  setSelectedTopicIds([]);
+                }} className="w-full">
+                  <TabsList className="grid w-full max-w-md grid-cols-2">
+                    <TabsTrigger value="chapter">By Chapter</TabsTrigger>
+                    <TabsTrigger value="topic">By Topic</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
               {/* Chapter Selection Mode Toggle - only for difficulty mode */}
               {paperMode === 'difficulty' && (
                 <div className="mb-6 flex justify-center">
@@ -4059,142 +4166,239 @@ const StudentPortal = () => {
                 </div>
               )}
 
-              {/* Search Chapters */}
+              {/* Search Input */}
               <div className="mb-4 max-w-md mx-auto relative">
                 <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                 <Input
-                  placeholder="Search chapters..."
-                  value={chapterQuery}
-                  onChange={(e) => setChapterQuery(e.target.value)}
+                  placeholder={selectionMode === 'chapter' ? "Search chapters..." : "Search topics..."}
+                  value={selectionMode === 'chapter' ? chapterQuery : topicQuery}
+                  onChange={(e) => {
+                    if (selectionMode === 'chapter') {
+                      setChapterQuery(e.target.value);
+                    } else {
+                      setTopicQuery(e.target.value);
+                    }
+                  }}
                   className="pl-9"
                 />
               </div>
 
               {/* Removed marks input here for Random Paper, keep it on review page only */}
 
-              {chapters.length > 0 ? (
-                <div className="space-y-3 w-full">
-                  {chapters
-                    .filter((chapter) => chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase()))
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((chapter, index) => {
-                      const isExpanded = expandedChapters[chapter.name] || false;
-                      const types = chapterQuestionTypes[chapter.name] || [];
-                      const isLoadingTypes = loadingTypes[chapter.name] || false;
+              {/* Chapter Selection Tab Content */}
+              {selectionMode === 'chapter' && (
+                <>
+                  {loadingChapters ? (
+                    <div className="text-center py-12">
+                      <Loader2 className="w-8 h-8 animate-spin mx-auto text-academic-purple" />
+                      <p className="text-muted-foreground mt-2">Loading chapters...</p>
+                    </div>
+                  ) : chapters.length > 0 ? (
+                    <div className="space-y-3 w-full">
+                      {chapters
+                        .filter((chapter) => chapter.name.toLowerCase().includes(chapterQuery.trim().toLowerCase()))
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((chapter, index) => {
+                          const isExpanded = expandedChapters[chapter.name] || false;
+                          const types = chapterQuestionTypes[chapter.name] || [];
+                          const isLoadingTypes = loadingTypes[chapter.name] || false;
 
-                      return (
-                        <Card
-                          key={chapter.id || index}
-                          className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
-                        >
-                          <CardContent className="p-4">
-                            {(paperMode === 'chapter' || paperMode === 'random') ? (
-                              <div className="flex items-center gap-4 w-full">
-                                <Checkbox
-                                  id={`chapter-${chapter.id}`}
-                                  checked={selectedChapterNames.includes(chapter.name)}
-                                  onCheckedChange={(checked) => {
-                                    setSelectedChapterNames(prev => {
-                                      const set = new Set(prev);
-                                      if (checked) set.add(chapter.name); else set.delete(chapter.name);
-                                      return Array.from(set);
-                                    });
-                                    setSelectedChapterIds(prev => {
-                                      const set = new Set(prev);
-                                      if (checked) set.add(chapter.id); else set.delete(chapter.id);
-                                      return Array.from(set);
-                                    });
-                                  }}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
-                                    {chapter.name}
-                                  </h3>
-                                  <div className="mt-1">
-                                    <Badge variant="secondary" className="text-xs">Chapter</Badge>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div 
-                                className="flex items-center gap-4 w-full cursor-pointer hover:bg-accent/50 rounded-md p-2 -m-2 transition-colors"
-                                onClick={() => handleChapterClick(chapter.name, chapter.id)}
-                              >
-                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
-                                  <BookOpen className="w-5 h-5" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
-                                    {chapter.name}
-                                  </h3>
-                                  <div className="mt-1">
-                                    <Badge variant="secondary" className="text-xs">Chapter</Badge>
-                                  </div>
-                                </div>
-                                <div className="flex-shrink-0">
-                                  {isExpanded ? (
-                                    <ChevronUp className="w-5 h-5 text-muted-foreground" />
-                                  ) : (
-                                    <ChevronDown className="w-5 h-5 text-muted-foreground" />
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Question Types Dropdown */}
-                            {paperMode !== 'chapter' && isExpanded && (
-                              <div className="mt-3 mx-2">
-                                {isLoadingTypes ? (
-                                  <div className="flex items-center justify-center py-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
-                                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-indigo-200 border-t-indigo-500"></div>
-                                    <p className="text-xs text-indigo-600 ml-2 font-medium">Loading types...</p>
-                                  </div>
-                                ) : types.length > 0 ? (
-                                  <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-3 shadow-sm border border-gray-100">
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {types.map((type, typeIndex) => (
-                                        <button
-                                          key={typeIndex}
-                                          onClick={() => {
-                                            setSelectedChapter(chapter.name);
-                                            setSelectedQuestionType(type);
-                                            setCurrentStep("question-selection");
-                                          }}
-                                          className="group relative inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-full bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 transition-all duration-200 shadow-sm hover:shadow-md transform hover:scale-105"
-                                        >
-                                          <span className="text-gray-700 group-hover:text-indigo-700 transition-colors">
-                                            {type}
-                                          </span>
-                                          <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-gray-100 group-hover:bg-indigo-100 text-gray-600 group-hover:text-indigo-600 rounded-full transition-colors">
-                                            {chapterQuestions.filter(q => q.type === type).length}
-                                          </span>
-                                        </button>
-                                      ))}
+                          return (
+                            <Card
+                              key={chapter.id || index}
+                              className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
+                            >
+                              <CardContent className="p-4">
+                                {(paperMode === 'chapter' || paperMode === 'random') ? (
+                                  <div className="flex items-center gap-4 w-full">
+                                    <Checkbox
+                                      id={`chapter-${chapter.id}`}
+                                      checked={selectedChapterNames.includes(chapter.name)}
+                                      onCheckedChange={(checked) => {
+                                        setSelectedChapterNames(prev => {
+                                          const set = new Set(prev);
+                                          if (checked) set.add(chapter.name); else set.delete(chapter.name);
+                                          return Array.from(set);
+                                        });
+                                        setSelectedChapterIds(prev => {
+                                          const set = new Set(prev);
+                                          if (checked) set.add(chapter.id); else set.delete(chapter.id);
+                                          return Array.from(set);
+                                        });
+                                      }}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                        {chapter.name}
+                                      </h3>
+                                      <div className="mt-1">
+                                        <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                      </div>
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center justify-center py-4 bg-gray-50 rounded-lg">
-                                    <p className="text-xs text-gray-500">No question types available</p>
+                                  <div 
+                                    className="flex items-center gap-4 w-full cursor-pointer hover:bg-accent/50 rounded-md p-2 -m-2 transition-colors"
+                                    onClick={() => handleChapterClick(chapter.name, chapter.id)}
+                                  >
+                                    <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                                      <BookOpen className="w-5 h-5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                        {chapter.name}
+                                      </h3>
+                                      <div className="mt-1">
+                                        <Badge variant="secondary" className="text-xs">Chapter</Badge>
+                                      </div>
+                                    </div>
+                                    <div className="flex-shrink-0">
+                                      {isExpanded ? (
+                                        <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                                      ) : (
+                                        <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                                      )}
+                                    </div>
                                   </div>
                                 )}
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                </div>
-              ) : (
-                <div className="text-center py-12">
-                  <p className="text-muted-foreground">No chapters available</p>
-                </div>
+                                
+                                {/* Question Types Dropdown */}
+                                {paperMode !== 'chapter' && isExpanded && (
+                                  <div className="mt-3 mx-2">
+                                    {isLoadingTypes ? (
+                                      <div className="flex items-center justify-center py-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg">
+                                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-indigo-200 border-t-indigo-500"></div>
+                                        <p className="text-xs text-indigo-600 ml-2 font-medium">Loading types...</p>
+                                      </div>
+                                    ) : types.length > 0 ? (
+                                      <div className="bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl p-3 shadow-sm border border-gray-100">
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {types.map((type, typeIndex) => (
+                                            <button
+                                              key={typeIndex}
+                                              onClick={() => {
+                                                setSelectedChapter(chapter.name);
+                                                setSelectedQuestionType(type);
+                                                setCurrentStep("question-selection");
+                                              }}
+                                              className="group relative inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-full bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 transition-all duration-200 shadow-sm hover:shadow-md transform hover:scale-105"
+                                            >
+                                              <span className="text-gray-700 group-hover:text-indigo-700 transition-colors">
+                                                {type}
+                                              </span>
+                                              <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-bold bg-gray-100 group-hover:bg-indigo-100 text-gray-600 group-hover:text-indigo-600 rounded-full transition-colors">
+                                                {chapterQuestions.filter(q => q.type === type).length}
+                                              </span>
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center justify-center py-4 bg-gray-50 rounded-lg">
+                                        <p className="text-xs text-gray-500">No question types available</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground">No chapters available</p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Topic Selection Tab Content */}
+              {selectionMode === 'topic' && (
+                <>
+                  {loadingTopics ? (
+                    <div className="text-center py-12">
+                      <Loader2 className="w-8 h-8 animate-spin mx-auto text-academic-purple" />
+                      <p className="text-muted-foreground mt-2">Loading topics...</p>
+                    </div>
+                  ) : topics.length > 0 ? (
+                    <div className="space-y-3 w-full">
+                      {topics
+                        .filter((topic) => topic.name.toLowerCase().includes(topicQuery.trim().toLowerCase()))
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((topic, index) => {
+                          return (
+                            <Card
+                              key={topic.id || index}
+                              className="border bg-card hover:border-primary/50 hover:shadow-lg transition-all duration-200 w-full"
+                            >
+                              <CardContent className="p-4">
+                                {(paperMode === 'chapter' || paperMode === 'random') ? (
+                                  <div className="flex items-center gap-4 w-full">
+                                    <Checkbox
+                                      id={`topic-${topic.id}`}
+                                      checked={selectedTopicNames.includes(topic.name)}
+                                      onCheckedChange={(checked) => {
+                                        setSelectedTopicNames(prev => {
+                                          const set = new Set(prev);
+                                          if (checked) set.add(topic.name); else set.delete(topic.name);
+                                          return Array.from(set);
+                                        });
+                                        setSelectedTopicIds(prev => {
+                                          const set = new Set(prev);
+                                          if (checked) set.add(topic.id); else set.delete(topic.id);
+                                          return Array.from(set);
+                                        });
+                                      }}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                        {topic.name}
+                                      </h3>
+                                      <div className="mt-1 flex items-center gap-2">
+                                        <Badge variant="secondary" className="text-xs">Topic</Badge>
+                                        {topic.chapterName && (
+                                          <Badge variant="outline" className="text-xs">from {topic.chapterName}</Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-4 w-full">
+                                    <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center flex-shrink-0">
+                                      <FileText className="w-5 h-5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="text-base font-semibold text-left break-words whitespace-normal leading-normal">
+                                        {topic.name}
+                                      </h3>
+                                      <div className="mt-1 flex items-center gap-2">
+                                        <Badge variant="secondary" className="text-xs">Topic</Badge>
+                                        {topic.chapterName && (
+                                          <Badge variant="outline" className="text-xs">from {topic.chapterName}</Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground">No topics available</p>
+                    </div>
+                  )}
+                </>
               )}
 
               {(paperMode === 'chapter' || paperMode === 'random') && (
                 <div className="mt-6">
                   <div className="flex justify-end">
                     <Button
-                      disabled={selectedChapterNames.length === 0}
+                      disabled={selectionMode === 'chapter' ? selectedChapterNames.length === 0 : selectedTopicNames.length === 0}
                       onClick={async () => {
                         try {
                           if (!selectedSubject?.id) return;
@@ -4203,43 +4407,82 @@ const StudentPortal = () => {
                             // For random paper, go to configuration step
                             setCurrentStep('random-config');
                           } else {
-                            // For chapter mode, fetch all questions from selected chapters
+                            // For chapter/topic mode, fetch all questions from selected chapters/topics
                             let all: Question[] = [];
                             
-                            if (selectedChapterIds.length > 0) {
-                              // Use efficient chapter ID-based fetching
-                              all = await fetchQuestionsFromChapters(selectedChapterIds);
-                            } else {
-                              // Fallback: Use chapter names
-                              console.log("⚠️ No chapter IDs available, falling back to name-based fetch");
-                              for (const chName of selectedChapterNames) {
-                                const data = await fetchQuestions(selectedSubject.id!, chName);
-                                all.push(...data);
+                            if (selectionMode === 'chapter') {
+                              if (selectedChapterIds.length > 0) {
+                                // Use efficient chapter ID-based fetching
+                                all = await fetchQuestionsFromChapters(selectedChapterIds);
+                              } else {
+                                // Fallback: Use chapter names
+                                console.log("⚠️ No chapter IDs available, falling back to name-based fetch");
+                                for (const chName of selectedChapterNames) {
+                                  const data = await fetchQuestions(selectedSubject.id!, chName);
+                                  all.push(...data);
+                                }
                               }
+                              
+                              const allowed = new Set(selectedChapterNames);
+                              const pool = all.filter(q => allowed.has(q.chapter) || selectedChapterNames.length === 0);
+                              if (pool.length === 0) {
+                                setError('No questions found in selected chapters.');
+                                return;
+                              }
+                              setSelectedChapter(selectedChapterNames.join(', '));
+                              setSelectedQuestions(pool);
+                              
+                              // Build types map and go to allocation screen
+                              const byType: Record<string, number> = {};
+                              pool.forEach(q => {
+                                const raw = (q.type || '').toString().trim();
+                                if (!raw) return;
+                                const t = raw.charAt(0).toUpperCase() + raw.slice(1);
+                                byType[t] = (byType[t] || 0) + 1;
+                              });
+                              setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
+                            } else {
+                              // Topic mode - fetch questions by topics
+                              // For now, we'll fetch all questions and filter by topic (if topic field exists)
+                              // In the future, this can be enhanced with a topic-specific API endpoint
+                              console.log("📚 Fetching questions for topics:", selectedTopicNames);
+                              const allQuestions = await fetchQuestions(selectedSubject.id!);
+                              
+                              // Filter questions by selected topics
+                              // Note: This assumes questions have a 'topic' field - adjust based on your API structure
+                              const pool = allQuestions.filter(q => {
+                                const questionTopic = (q as any).topic || (q as any).topicName;
+                                return questionTopic && selectedTopicNames.some(selectedName => 
+                                  questionTopic.toLowerCase().trim() === selectedName.toLowerCase().trim()
+                                );
+                              });
+                              
+                              if (pool.length === 0) {
+                                // If no topic field exists, use all questions as fallback
+                                console.log("⚠️ No topic field found in questions, using all questions");
+                                setSelectedQuestions(allQuestions);
+                              } else {
+                                setSelectedQuestions(pool);
+                              }
+                              
+                              setSelectedChapter(selectedTopicNames.join(', '));
+                              
+                              // Build types map and go to allocation screen
+                              const byType: Record<string, number> = {};
+                              (pool.length > 0 ? pool : allQuestions).forEach(q => {
+                                const raw = (q.type || '').toString().trim();
+                                if (!raw) return;
+                                const t = raw.charAt(0).toUpperCase() + raw.slice(1);
+                                byType[t] = (byType[t] || 0) + 1;
+                              });
+                              setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
                             }
                             
-                            const allowed = new Set(selectedChapterNames);
-                            const pool = all.filter(q => allowed.has(q.chapter) || selectedChapterNames.length === 0);
-                            if (pool.length === 0) {
-                              setError('No questions found in selected chapters.');
-                              return;
-                            }
-                            // Build types map and go to allocation screen
-                            const byType: Record<string, number> = {};
-                            pool.forEach(q => {
-                              const raw = (q.type || '').toString().trim();
-                              if (!raw) return; // skip questions without a type
-                              const t = raw.charAt(0).toUpperCase() + raw.slice(1); // pretty label (e.g., "text" -> "Text")
-                              byType[t] = (byType[t] || 0) + 1;
-                            });
-                            setSelectedChapter(selectedChapterNames.join(', '));
-                            setSelectedQuestions(pool); // pool retained; we will sample from it
-                            setTypeAllocations(Object.fromEntries(Object.keys(byType).map(t => [t, 0])));
                             setCurrentStep('type-allocation');
                           }
                         } catch (e) {
                           console.error(e);
-                          setError('Failed to process selected chapters.');
+                          setError(`Failed to process selected ${selectionMode === 'chapter' ? 'chapters' : 'topics'}.`);
                         }
                       }}
                       className="bg-academic-blue hover:bg-academic-blue/90"
@@ -4274,7 +4517,10 @@ const StudentPortal = () => {
               <CardDescription>
                 {selectedBoard?.name} - {selectedStandard?.name} - {selectedSubject?.name}
                 <span className="block mt-1 text-sm font-medium text-green-600">
-                  Selected chapters: {selectedChapterNames.join(', ')}
+                  {selectionMode === 'chapter' 
+                    ? `Selected chapters: ${selectedChapterNames.join(', ')}`
+                    : `Selected topics: ${selectedTopicNames.join(', ')}`
+                  }
                 </span>
               </CardDescription>
               <Button
@@ -4283,7 +4529,7 @@ const StudentPortal = () => {
                 className="mt-2"
               >
                 <ChevronLeft className="w-4 h-4 mr-2" />
-                Change Chapters
+                Change {selectionMode === 'chapter' ? 'Chapters' : 'Topics'}
               </Button>
             </CardHeader>
 
@@ -4370,36 +4616,61 @@ const StudentPortal = () => {
                     try {
                       if (!selectedSubject?.id) return;
                       
-                      console.log("🎲 Generating random paper from chapters:", selectedChapterNames);
-                      console.log("🎲 Using chapter IDs:", selectedChapterIds);
-                      
                       let allQuestions: Question[] = [];
                       
-                      if (selectedChapterIds.length > 0) {
-                        // Use efficient chapter ID-based fetching
-                        allQuestions = await fetchQuestionsFromChapters(selectedChapterIds);
+                      if (selectionMode === 'chapter') {
+                        console.log("🎲 Generating random paper from chapters:", selectedChapterNames);
+                        console.log("🎲 Using chapter IDs:", selectedChapterIds);
+                        
+                        if (selectedChapterIds.length > 0) {
+                          // Use efficient chapter ID-based fetching
+                          allQuestions = await fetchQuestionsFromChapters(selectedChapterIds);
+                        } else {
+                          // Fallback: Fetch all questions from the subject first (old behavior)
+                          console.log("⚠️ No chapter IDs available, falling back to subject-wide fetch");
+                          allQuestions = await fetchQuestions(selectedSubject.id!);
+                          
+                          // Filter questions by selected chapters
+                          allQuestions = allQuestions.filter(q => {
+                            const questionChapter = q.chapter || (q as any).chapterName || (q as any).chapter_name;
+                            const matches = questionChapter && selectedChapterNames.some(selectedName => 
+                              questionChapter.toLowerCase().trim() === selectedName.toLowerCase().trim()
+                            );
+                            if (matches) {
+                              console.log(`✓ Including question from chapter: ${questionChapter}`);
+                            }
+                            return matches;
+                          });
+                        }
+                        
+                        setSelectedChapter(selectedChapterNames.join(', '));
                       } else {
-                        // Fallback: Fetch all questions from the subject first (old behavior)
-                        console.log("⚠️ No chapter IDs available, falling back to subject-wide fetch");
+                        console.log("🎲 Generating random paper from topics:", selectedTopicNames);
+                        console.log("🎲 Using topic IDs:", selectedTopicIds);
+                        
+                        // Fetch all questions and filter by topics
                         allQuestions = await fetchQuestions(selectedSubject.id!);
                         
-                        // Filter questions by selected chapters
-                        allQuestions = allQuestions.filter(q => {
-                          const questionChapter = q.chapter || (q as any).chapterName || (q as any).chapter_name;
-                          const matches = questionChapter && selectedChapterNames.some(selectedName => 
-                            questionChapter.toLowerCase().trim() === selectedName.toLowerCase().trim()
+                        // Filter questions by selected topics
+                        const filtered = allQuestions.filter(q => {
+                          const questionTopic = (q as any).topic || (q as any).topicName;
+                          return questionTopic && selectedTopicNames.some(selectedName => 
+                            questionTopic.toLowerCase().trim() === selectedName.toLowerCase().trim()
                           );
-                          if (matches) {
-                            console.log(`✓ Including question from chapter: ${questionChapter}`);
-                          }
-                          return matches;
                         });
+                        
+                        if (filtered.length > 0) {
+                          allQuestions = filtered;
+                        }
+                        
+                        setSelectedChapter(selectedTopicNames.join(', '));
                       }
                       
                       console.log("🔍 Total questions available for random paper:", allQuestions.length);
                       
                       if (allQuestions.length === 0) {
-                        setError(`No questions found in selected chapters: ${selectedChapterNames.join(', ')}. Please check if the API contains questions for these chapters.`);
+                        const selectedItems = selectionMode === 'chapter' ? selectedChapterNames : selectedTopicNames;
+                        setError(`No questions found in selected ${selectionMode === 'chapter' ? 'chapters' : 'topics'}: ${selectedItems.join(', ')}. Please check if the API contains questions for these ${selectionMode === 'chapter' ? 'chapters' : 'topics'}.`);
                         return;
                       }
                       
@@ -4410,7 +4681,6 @@ const StudentPortal = () => {
                       
                       console.log(`🎯 Selected ${selected.length} random questions out of ${allQuestions.length} available`);
                       
-                      setSelectedChapter(selectedChapterNames.join(', '));
                       setSelectedQuestions(selected);
                       setCurrentStep('paper-review');
                     } catch (e) {

@@ -2316,7 +2316,7 @@ const StudentPortal = () => {
       // Send user-provided data with user-selected board and standard IDs
       const completeUserData = {
         username: userData.email.split('@')[0], // Use email prefix as username
-        password: userData.password, // User-provided password
+        password: userData.password || "default123456", // User-provided password or default (min 6 chars)
         email: userData.email, // User-provided email
         firstName: userData.email.split('@')[0], // Use email prefix as firstName
         lastName: "Student", // Default lastName
@@ -3071,7 +3071,9 @@ const StudentPortal = () => {
         console.log("💡 Consider creating the user first before updating profile");
         return null;
       } else {
+        const errorText = await response.text();
         console.error("❌ Failed to update user profile:", response.status, response.statusText);
+        console.error("❌ Error response:", errorText);
         return null;
       }
     } catch (error) {
@@ -4892,7 +4894,8 @@ const StudentPortal = () => {
                       console.log(`🎯 Selected ${selected.length} random questions out of ${allQuestions.length} available`);
                       
                       setSelectedQuestions(selected);
-                      setCurrentStep('paper-review');
+                      // Go to type-allocation first to let user select question types
+                      setCurrentStep('type-allocation');
                     } catch (e) {
                       console.error('❌ Error generating random paper:', e);
                       const errorMessage = e instanceof Error ? e.message : String(e);
@@ -4937,12 +4940,17 @@ const StudentPortal = () => {
     const totalMarks = types.reduce((sum, t) => sum + (typeAllocations[t] || 0) * (byTypeMap[t].marks || 0), 0);
     const totalSelected = types.reduce((sum, t) => sum + (typeAllocations[t] || 0), 0);
 
+    // Determine the title based on paper mode
+    const pageTitle = paperMode === 'random' ? 'Random Paper' : 
+                      paperMode === 'difficulty' ? 'Difficulty Paper' : 
+                      'Chapter Paper';
+
     return (
       <div className="min-h-screen bg-gradient-background p-4">
         <div className="max-w-4xl mx-auto">
           <Card className="shadow-card animate-fade-in">
             <CardHeader>
-              <CardTitle className="text-2xl font-bold">Chapter Paper</CardTitle>
+              <CardTitle className="text-2xl font-bold">{pageTitle}</CardTitle>
               <CardDescription className="flex justify-between">
                 <span>{selectedStandard?.name} - {selectedSubject?.name}</span>
                 <span>Total Exam Mark : {totalMarks}</span>

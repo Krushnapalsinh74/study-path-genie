@@ -58,6 +58,8 @@ interface Question {
   marks: number;
   text?: string;
   content?: string;
+  options?: string[];
+  answer?: string | number;
 }
 
 interface Chapter {
@@ -637,7 +639,7 @@ const StudentPortal = () => {
     return html;
   };
 
-  const generatePDFViaHTML = async () => {
+  const generatePDFViaHTML = async (includeAnswers?: boolean) => {
     // Build hidden container
     const totalMarks = selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0);
 
@@ -691,11 +693,20 @@ const StudentPortal = () => {
           const qText = q.question || (q as any).text || (q as any).content || '[No question text]';
           const qHtml = latexToHtml(qText);
           const marks = Number.isFinite(q.marks) ? q.marks : '-';
+          const isMcq = (q as any)._ct === 'MCQ' || String(q.type || '').toLowerCase().includes('mcq');
+          const opts = isMcq ? getQuestionOptions(q) : [];
+          const optsHtml = opts.length
+            ? `<div style=\"margin-top:6px; margin-left:30px;\">${opts
+                .map((opt, i) => `${String.fromCharCode(65 + i)}. ${latexToHtml(String(opt))}`)
+                .map((line) => `<div style=\"margin:2px 0;\">${line}</div>`)
+                .join('')}</div>`
+            : '';
+          const ansHtml = includeAnswers ? (() => { const a = getQuestionAnswer(q); return a ? `<div style=\"margin-top:6px; margin-left:30px; color:#006400; font-style:italic;\">Answer: ${latexToHtml(String(a))}</div>` : '' })() : '';
           const html = `
             <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
               <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
                 <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
-                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}</div>
+                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}${optsHtml}${ansHtml}</div>
                 <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
               </div>
             </div>`;
@@ -908,8 +919,42 @@ const StudentPortal = () => {
       marks: Number(raw?.marks ?? raw?.score ?? raw?.points ?? 0),
       text: raw?.text,
       content: raw?.content,
+      options: Array.isArray(raw?.options)
+        ? raw.options
+        : Array.isArray(raw?.choices)
+        ? raw.choices
+        : Array.isArray(raw?.mcqOptions)
+        ? raw.mcqOptions
+        : (raw?.a || raw?.b || raw?.c || raw?.d)
+        ? [raw?.a, raw?.b, raw?.c, raw?.d].filter((x: any) => typeof x === 'string' && x.trim())
+        : undefined,
+      answer:
+        raw?.answer ??
+        raw?.correct ??
+        raw?.correctAnswer ??
+        raw?.correct_option ??
+        raw?.solution ??
+        raw?.key
     };
     return normalized;
+  };
+
+  const getQuestionOptions = (q: any): string[] => {
+    const opts = (q?.options as any) || q?.choices || q?.mcqOptions;
+    if (Array.isArray(opts)) return opts.filter((o) => typeof o === 'string' && o.trim());
+    const abcd = [q?.a, q?.b, q?.c, q?.d].filter((x: any) => typeof x === 'string' && x.trim());
+    return abcd.length ? (abcd as string[]) : [];
+  };
+
+  const getQuestionAnswer = (q: any): string | null => {
+    const ans = q?.answer ?? q?.correct ?? q?.correctAnswer ?? q?.correct_option ?? q?.solution ?? q?.key;
+    if (ans === undefined || ans === null) return null;
+    if (typeof ans === 'number') {
+      const idx = ans;
+      const letter = idx >= 0 && idx < 26 ? String.fromCharCode(65 + idx) : `${idx}`;
+      return letter;
+    }
+    return String(ans);
   };
 
   // Auto-bypass OTP if previously verified on this browser
@@ -5198,6 +5243,22 @@ const StudentPortal = () => {
                                           <div className="text-xs sm:text-sm">
                                             <LatexPreview content={question.question || (question as any).text || (question as any).content || ''} />
                                           </div>
+                      {/* MCQ options preview if present */}
+                      {(() => {
+                        const isMcq = (question.type || '').toString().toLowerCase().includes('mcq');
+                        const opts = isMcq ? getQuestionOptions(question) : [];
+                        if (!opts.length) return null;
+                        const letters = ['A','B','C','D','E','F','G','H'];
+                        return (
+                          <div className="mt-2 space-y-1">
+                            {opts.map((opt, idx) => (
+                              <div key={idx} className="text-xs">
+                                {letters[idx] || String(idx + 1)}. <LatexPreview content={String(opt)} />
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                                         </div>
                                       </div>
                                       <div>
@@ -5224,7 +5285,8 @@ const StudentPortal = () => {
                   </div>
 
                   <div className="flex justify-center pt-6 gap-3 flex-shrink-0">
-                    <Button onClick={generatePDF} className="bg-green-600 hover:bg-green-700">Download PDF</Button>
+                  <Button onClick={generatePDF} className="bg-green-600 hover:bg-green-700">Download PDF</Button>
+                  <Button onClick={() => generatePDFViaHTML(true)} className="bg-blue-600 hover:bg-blue-700">Download with Answers</Button>
                   </div>
                 </div>
               ) : (

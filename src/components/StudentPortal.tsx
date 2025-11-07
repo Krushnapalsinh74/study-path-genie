@@ -5122,11 +5122,7 @@ const StudentPortal = () => {
                   <div className="bg-gray-50 p-4 rounded-lg mb-4 flex-shrink-0">
                     <h3 className="font-semibold mb-2">Paper Summary</h3>
                     <p className="text-sm text-muted-foreground">
-                      Total Questions: {selectedQuestions.length} |
-                      Total Marks: {selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0)} |
-                      Target: {targetTotalMarks} |
-                      {selectedChapter ? <>Chapter: {selectedChapter} | </> : null}
-                      {selectedQuestionType ? <>Type: {selectedQuestionType}</> : null}
+                      Total Questions: {selectedQuestions.length} | Total Marks: {selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0)}
                     </p>
                   </div>
 

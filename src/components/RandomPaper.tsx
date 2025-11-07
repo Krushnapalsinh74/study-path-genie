@@ -42,17 +42,20 @@ export default function RandomPaper({ subject, standard, board, onBack }) {
   <div className="min-h-screen bg-gradient-to-br from-blue-500 to-blue-700 p-4">
       <div className="max-w-4xl mx-auto">
         <Card className="shadow-card animate-fade-in">
-          <CardHeader className="text-center">
-            <CardTitle className="text-3xl font-bold text-white mb-2 flex items-center justify-center">
-              <span className="mr-2">📘</span> Random Paper
-            </CardTitle>
-            <div className="text-white mb-2">
-              {board} - {standard} - {subject}
-            </div>
-            <Button variant="ghost" className="mt-2" onClick={onBack}>
-              ← Back
-            </Button>
-          </CardHeader>
+          {/* Header - shown for config and preview, hidden for type-allocation */}
+          {currentStep !== "type-allocation" && (
+            <CardHeader className="text-center">
+              <CardTitle className="text-3xl font-bold text-white mb-2 flex items-center justify-center">
+                <span className="mr-2">📘</span> Random Paper
+              </CardTitle>
+              <div className="text-white mb-2">
+                {board} - {standard} - {subject}
+              </div>
+              <Button variant="ghost" className="mt-2" onClick={onBack}>
+                ← Back
+              </Button>
+            </CardHeader>
+          )}
           
           {/* Step 1: Configuration */}
           {currentStep === "config" && (

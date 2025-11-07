@@ -645,35 +645,33 @@ const StudentPortal = () => {
 
     // Build two sections: A = MCQ, B = Others (ascending marks)
     const sectionLabel = (idx: number) => String.fromCharCode('A'.charCodeAt(0) + idx);
+    const answerKey: { num: number; ans: string }[] = [];
     const makeSectionHTML = () => {
       let qNumber = 1;
       if (customSections.length > 0) {
         const nonEmptySections = customSections.filter(sec => sec.subsections.some(sub => sub.questions.length > 0));
         return nonEmptySections.map((sec, sidx) => {
-          const title = `Section ${String.fromCharCode('A'.charCodeAt(0) + sidx)}: ${sec.title || '-'}`;
           const subs = sec.subsections.filter(sub => sub.questions.length > 0).map(sub => {
             const items = sub.questions.map(q => {
               const qText = q.text || '[No question text]';
               const qHtml = latexToHtml(qText);
               const marks = Number.isFinite(q.marks) ? q.marks : '-';
               return `
-                <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
+                <div style=\"padding:6px 0;\">\
                   <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
-                    <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
-                    <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}</div>
-                    <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
+                    <div style=\"min-width:28px; font-weight:700;\">Q${qNumber++}.</div>
+                    <div style=\"flex:1; line-height:1.55; font-size:13px;\">${qHtml}</div>
+                    <div style=\"min-width:42px; text-align:right; font-size:11px;\">(${marks})</div>
                   </div>
                 </div>`;
             }).join('');
             return `
               <div style=\"margin-top:10px;\">\
-                <div style=\"font-weight:600; font-size:13px;\">${sub.title || '-'}</div>
                 ${items}
               </div>`;
           }).join('');
           return `
             <div style=\"margin-top:14px;\">\
-              <div style=\"font-weight:700; font-size:14px; border-left:4px solid #222; padding-left:8px;\">${title}</div>
               ${subs}
             </div>`;
         }).join('');
@@ -701,20 +699,24 @@ const StudentPortal = () => {
                 .map((line) => `<div style=\"margin:2px 0;\">${line}</div>`)
                 .join('')}</div>`
             : '';
-          const ansHtml = includeAnswers ? (() => { const a = getQuestionAnswer(q); return a ? `<div style=\"margin-top:6px; margin-left:30px; color:#006400; font-style:italic;\">Answer: ${latexToHtml(String(a))}</div>` : '' })() : '';
+          if (includeAnswers) {
+            const a = getQuestionAnswer(q);
+            if (a) answerKey.push({ num: qNumber + 1, ans: String(a) });
+          }
+          const ansHtml = '';
+          const numForThis = qNumber++;
           const html = `
-            <div style=\"padding-bottom:8px; border-bottom:1px dashed #e5e5e5;\">\
+            <div style=\"padding:6px 0;\">\
               <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
-                <div style=\"min-width:26px; font-weight:700;\">Q${qNumber++}.</div>
-                <div style=\"flex:1; line-height:1.5; font-size:13px;\">${qHtml}${optsHtml}${ansHtml}</div>
-                <div style=\"margin-left:8px; font-size:11px; background:#efefef; border:1px solid #ddd; padding:2px 8px; border-radius:12px; white-space:nowrap;\">${marks} Marks</div>
+                <div style=\"min-width:28px; font-weight:700;\">Q${numForThis}.</div>
+                <div style=\"flex:1; line-height:1.55; font-size:13px;\">${qHtml}${optsHtml}${ansHtml}</div>
+                <div style=\"min-width:42px; text-align:right; font-size:11px;\">(${marks})</div>
               </div>
             </div>`;
           return html;
         }).join('');
         return `
           <div style=\"margin-top:14px;\">\
-            <div style=\"font-weight:700; font-size:14px; border-left:4px solid #222; padding-left:8px;\">${title}</div>
             ${items}
           </div>`;
       }).join('');
@@ -733,6 +735,16 @@ const StudentPortal = () => {
       .map(([m, c]) => `<span style=\"display:inline-block; padding:2px 10px; border:1px solid #ddd; background:#f6f6f6; border-radius:999px; font-size:11px; margin-right:8px; margin-bottom:6px;\">${m}-mark × ${c}</span>`)
       .join('');
 
+    const bodySectionsHtml = makeSectionHTML();
+    const answerKeyHtml = includeAnswers && answerKey.length
+      ? `<div class=\"section\" style=\"margin-top:16px;\">\
+           <div class=\"section-title\" style=\"font-weight:700;text-align:center;margin:10px 0;\">Answer Key</div>\
+           <div style=\"display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;font-size:12px;\">\
+             ${answerKey.map(e => `<div>Q${e.num}. ${latexToHtml(String(e.ans))}</div>`).join('')}\
+           </div>\
+         </div>`
+      : '';
+
     const container = document.createElement('div');
     container.style.position = 'fixed';
     container.style.left = '-10000px';
@@ -742,20 +754,64 @@ const StudentPortal = () => {
     container.style.color = '#000000';
     container.style.fontFamily = "'Noto Sans Gujarati','Noto Sans',system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
     container.innerHTML = `
-      <div style="padding:28px;">
-        <div style="text-align:center; font-weight:800; font-size:22px; letter-spacing:.2px;">${examTitle || 'Question Paper'}</div>
-        <div style="margin-top:8px; display:flex; justify-content:center; gap:18px; font-size:12px;">
-          <div>School: ${schoolName || '-'}</div>
-          <div>Board: ${selectedBoard?.name || '-'}</div>
-          <div>Standard: ${selectedStandard?.name || '-'}</div>
-          <div>Subject: ${selectedSubject?.name || '-'}</div>
-          <div>Duration: ${examDuration || '-'}</div>
-          <div>Total Marks: ${totalMarks}</div>
+      <div style="padding:0;">
+        <style>
+          .outer-frame{background:#ffffff;border:16px solid #000}
+          .paper-root{padding:26px 36px 36px 36px;font-family:'Times New Roman', Times, serif;color:#000;background:#ffffff}
+          .masthead{border:2px solid #000;border-radius:16px;padding:14px 16px;margin-bottom:14px}
+          .mast-title{text-align:center;line-height:1.35}
+          .mast-title .line1{font-weight:700;font-size:18px}
+          .mast-title .line2{font-weight:700;font-size:18px}
+          .mast-sub{margin-top:4px;text-align:center;font-size:13px;font-weight:600}
+          .meta-row{display:flex;justify-content:space-between;margin-top:8px;font-size:12px}
+          .divider{height:1px;background:#000;margin:12px 0}
+          .gi-title{font-weight:700;margin:8px 0 4px 0}
+          .gi{font-size:12px;margin:0 0 12px 0}
+          .gi li{margin:3px 0}
+          .section{margin-top:16px}
+          .section-title{font-weight:700;text-align:center;margin:10px 0}
+          .q-item{padding:8px 0}
+          .q-row{display:flex;align-items:flex-start;gap:10px}
+          .q-num{min-width:28px;font-weight:700}
+          .q-body{flex:1;line-height:1.6;font-size:13px}
+          .q-marks{margin-left:8px;font-size:11px}
+          .mcq-opts{margin-top:6px;margin-left:40px}
+          .mcq-line{margin:2px 0}
+          .answer{margin-top:6px;margin-left:40px;color:#0b6b00;font-style:italic}
+        </style>
+        <div class="outer-frame">
+          <div class="paper-root">
+          <div class="masthead">
+            <div class="mast-title">
+              <div class="line1">${selectedBoard?.name || 'State Board of Secondary and Higher Secondary Education'}</div>
+              <div class="line2">${schoolName || ''}</div>
+            </div>
+            <div class="mast-sub">
+              Sub.: ${selectedSubject?.name || '-'} &nbsp;&nbsp; Std.: ${selectedStandard?.name || '-'}
+            </div>
+          </div>
+          <div class="meta-row">
+            <div><strong>Time</strong>- ${examDuration || '-'}</div>
+            <div><strong>Total Marks</strong> -${totalMarks}</div>
+          </div>
+          <div class="divider"></div>
+          <div class="gi-title">General Instructions:</div>
+          <ol class="gi" style="padding-left:18px;">
+            <li>(1) Section A : MCQ and VSA as per syllabus.</li>
+            <li>(2) Section B : Short answer type questions.</li>
+            <li>(3) Section C : Short answer type questions (3 marks).</li>
+            <li>(4) Section D : Long answer type questions (4 marks).</li>
+            <li>(5) Figures to the right indicate full marks.</li>
+            <li>(6) For each MCQ, write the correct option alphabet (a), (b), (c), (d). Only first attempt will be considered.</li>
+          </ol>
+          <div style="display:flex;justify-content:space-between;margin:10px 0 6px 0;font-size:12px">
+            <div><strong>Q. No. 1</strong> contains Ten multiple choice questions.</div>
+            <div style="white-space:nowrap">&nbsp;</div>
+          </div>
+          ${bodySectionsHtml}
+          ${answerKeyHtml}
+          </div>
         </div>
-        <div style="margin-top:10px; height:1px; background:#222;"></div>
-        ${examInstructions ? `<div style=\"margin-top:12px; font-size:12px; border:1px solid #ddd; padding:10px; border-radius:6px; background:#fafafa;\"><strong>Instructions:</strong> ${latexToHtml(examInstructions)}</div>` : ''}
-        ${marksGroups.length ? `<div style=\"margin-top:10px; font-size:12px;\"><strong>Marks Distribution:</strong><div style=\"margin-top:6px;\">${marksChips}</div></div>` : ''}
-        ${makeSectionHTML()}
       </div>
     `;
     document.body.appendChild(container);
@@ -827,10 +883,12 @@ const StudentPortal = () => {
         const left = 40; const right = imgWidthPt - 40; const usableWidth = right - left;
         const h = (usableWidth / pageCanvas.width) * pageCanvas.height;
         pdf.addImage(imgData, 'PNG', left, 30, usableWidth, h);
-        // Footer page number
+        // Footer page text like "Subject / page"
         const footerY = imgHeightPt - 24;
         pdf.setFontSize(10);
-        pdf.text(`Page ${page + 1} of ${totalPages}`, imgWidthPt / 2, footerY, { align: 'center' });
+        const subj = (selectedSubject?.name || '').trim();
+        const footerText = subj ? `${subj} / ${page + 1}` : `Page ${page + 1} of ${totalPages}`;
+        pdf.text(footerText, imgWidthPt / 2, footerY, { align: 'center' });
       }
 
       saveAndCleanup(pdf);

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Card, CardHeader, CardTitle, CardContent, Button, Label, Checkbox } from "@/components/ui";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter, CardDescription, Button, Label, Checkbox, Input } from "@/components/ui";
 import LatexPreview from "./LatexPreview";
 
 const questionCounts = [10, 20, 30, 50];
@@ -10,14 +10,15 @@ export default function RandomPaper({ subject, standard, board, onBack }) {
   const [customQuestions, setCustomQuestions] = useState("");
   const [paperType, setPaperType] = useState("Mixed");
   const [generatedQuestions, setGeneratedQuestions] = useState([]);
-  const [preview, setPreview] = useState(false);
+  const [currentStep, setCurrentStep] = useState("config"); // "config", "type-allocation", "preview"
+  const [typeAllocations, setTypeAllocations] = useState({});
 
   const handleGenerate = async () => {
     // TODO: Replace with actual API call
     const totalQuestions = customQuestions ? Number(customQuestions) : numQuestions;
     let typeList = [];
     if (paperType === "Mixed") {
-      typeList = ["MCQ", "Short Answer"];
+      typeList = ["MCQ", "Short Answer", "Text"];
     } else {
       typeList = [paperType];
     }
@@ -25,9 +26,16 @@ export default function RandomPaper({ subject, standard, board, onBack }) {
       id: i + 1,
       text: `Random ${typeList[i % typeList.length]} Question ${i + 1}`,
       type: typeList[i % typeList.length],
+      marks: typeList[i % typeList.length] === "MCQ" ? 1 : typeList[i % typeList.length] === "Text" ? 1 : 2,
     }));
     setGeneratedQuestions(questions);
-    setPreview(true);
+    
+    // If Mixed type, go to type-allocation, otherwise go directly to preview
+    if (paperType === "Mixed") {
+      setCurrentStep("type-allocation");
+    } else {
+      setCurrentStep("preview");
+    }
   };
 
   return (

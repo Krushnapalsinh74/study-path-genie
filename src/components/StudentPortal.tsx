@@ -19,6 +19,8 @@ import ChapterPaper from "./ChapterPaper";
 import DifficultyPaper from "./DifficultyPaper";
 import RandomPaper from "./RandomPaper";
 import katex from "katex";
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 
 // OTP cooldown (in milliseconds)
 const OTP_COOLDOWN_MS = 60_000;
@@ -60,6 +62,9 @@ interface Question {
   content?: string;
   options?: string[];
   answer?: string | number;
+  mediaUrl?: string;
+  imageUrl?: string;
+  image?: string;
 }
 
 interface Chapter {
@@ -173,6 +178,17 @@ const StudentPortal = () => {
   // Base URLs for services
   const OTP_BASE_URL = "https://08m8v685-3000.inc1.devtunnels.ms";
   const ADMIN_BASE_URL = "https://08m8v685-3002.inc1.devtunnels.ms";
+
+  // Helper function to fix image URLs - prepend base URL if needed
+  const fixImageUrl = (url: string | undefined | null): string | null => {
+    if (!url) return null;
+    // If URL already starts with http:// or https://, return as is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    // Otherwise prepend ADMIN_BASE_URL
+    return `${ADMIN_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
 
   // Check API connectivity with multiple fallback approaches
   const checkApiConnectivity = async (): Promise<{ isOnline: boolean; error?: string }> => {
@@ -617,7 +633,10 @@ const StudentPortal = () => {
   // Convert $...$ and $$...$$ segments to KaTeX HTML for PDF HTML rendering
   const latexToHtml = (text: string): string => {
     if (!text) return "";
-    const parts = text.split(/(\$\$[^$]*\$\$|\$[^$]*\$)/g);
+    // Unescape backslashes if they are double-escaped (\\sqrt becomes \sqrt)
+    let processedText = text.replace(/\\\\/g, '\\');
+    
+    const parts = processedText.split(/(\$\$[^$]*\$\$|\$[^$]*\$)/g);
     const html = parts.map((part) => {
       if (part.startsWith("$$") && part.endsWith("$$")) {
         const latexContent = part.slice(2, -2).trim();
@@ -688,28 +707,38 @@ const StudentPortal = () => {
       return nonEmpty.map((sec, idx) => {
         const title = `Section ${String.fromCharCode('A'.charCodeAt(0) + idx)}: ${sec.key}`;
         const items = sec.items.map(q => {
-          const qText = q.question || (q as any).text || (q as any).content || '[No question text]';
+          const qText = q.question || (q as any).questionText || (q as any).text || (q as any).content || '[No question text]';
           const qHtml = latexToHtml(qText);
           const marks = Number.isFinite(q.marks) ? q.marks : '-';
-          const isMcq = (q as any)._ct === 'MCQ' || String(q.type || '').toLowerCase().includes('mcq');
-          const opts = isMcq ? getQuestionOptions(q) : [];
+          
+          // Add image if present - fix URL
+          const rawImageUrl = q.mediaUrl || q.imageUrl || q.image;
+          const fixedImageUrl = fixImageUrl(rawImageUrl);
+          const imageHtml = fixedImageUrl 
+            ? `<div style="margin-top:8px;"><img src="${fixedImageUrl}" style="max-width:300px; max-height:250px; height:auto; object-fit:contain;" onerror="this.style.display='none'"/></div>`
+            : '';
+          
+          // Always try to get options regardless of question type
+          const opts = getQuestionOptions(q);
           const optsHtml = opts.length
-            ? `<div style=\"margin-top:6px; margin-left:30px;\">${opts
-                .map((opt, i) => `${String.fromCharCode(65 + i)}. ${latexToHtml(String(opt))}`)
-                .map((line) => `<div style=\"margin:2px 0;\">${line}</div>`)
+            ? `<div style="margin-top:6px; margin-left:30px;">${opts
+                .map((opt, i) => `<div style="margin:2px 0;">${String.fromCharCode(65 + i)}. ${latexToHtml(String(opt))}</div>`)
                 .join('')}</div>`
             : '';
+          // Show answer inline after the question if includeAnswers is true
+          let ansHtml = '';
           if (includeAnswers) {
             const a = getQuestionAnswer(q);
-            if (a) answerKey.push({ num: qNumber + 1, ans: String(a) });
+            if (a) {
+              ansHtml = `<div style="margin-top:8px; padding:8px; background:#f0f9ff; border-left:3px solid #3b82f6; font-size:12px;"><strong>Answer:</strong> ${latexToHtml(String(a))}</div>`;
+            }
           }
-          const ansHtml = '';
           const numForThis = qNumber++;
           const html = `
             <div style=\"padding:6px 0;\">\
               <div style=\"display:flex; align-items:flex-start; gap:10px;\">\
                 <div style=\"min-width:28px; font-weight:700;\">Q${numForThis}.</div>
-                <div style=\"flex:1; line-height:1.55; font-size:13px;\">${qHtml}${optsHtml}${ansHtml}</div>
+                <div style=\"flex:1; line-height:1.55; font-size:13px;\">${qHtml}${imageHtml}${optsHtml}${ansHtml}</div>
                 <div style=\"min-width:42px; text-align:right; font-size:11px;\">(${marks})</div>
               </div>
             </div>`;
@@ -736,14 +765,8 @@ const StudentPortal = () => {
       .join('');
 
     const bodySectionsHtml = makeSectionHTML();
-    const answerKeyHtml = includeAnswers && answerKey.length
-      ? `<div class=\"section\" style=\"margin-top:16px;\">\
-           <div class=\"section-title\" style=\"font-weight:700;text-align:center;margin:10px 0;\">Answer Key</div>\
-           <div style=\"display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;font-size:12px;\">\
-             ${answerKey.map(e => `<div>Q${e.num}. ${latexToHtml(String(e.ans))}</div>`).join('')}\
-           </div>\
-         </div>`
-      : '';
+    // Don't show Answer Key section - answers are shown inline with questions
+    const answerKeyHtml = '';
 
     const container = document.createElement('div');
     container.style.position = 'fixed';
@@ -816,9 +839,44 @@ const StudentPortal = () => {
     `;
     document.body.appendChild(container);
 
-    const saveAndCleanup = (pdf: jsPDF) => {
+    const saveAndCleanup = async (pdf: jsPDF) => {
       const fileName = `${selectedSubject?.name || 'Subject'}_${selectedChapter || 'All'}_Question_Paper.pdf`;
-      pdf.save(fileName);
+      
+      // Check if running on native platform (Android/iOS)
+      const isNative = Capacitor.isNativePlatform();
+      
+      if (isNative) {
+        try {
+          // Get PDF as base64
+          const pdfBase64 = pdf.output('dataurlstring').split(',')[1];
+          
+          // Save to device's Downloads folder
+          const result = await Filesystem.writeFile({
+            path: fileName,
+            data: pdfBase64,
+            directory: Directory.Documents,
+          });
+          
+          toast({ 
+            title: 'PDF Saved', 
+            description: `Question paper saved to Documents folder: ${fileName}`,
+            duration: 5000
+          });
+          
+          console.log('PDF saved to:', result.uri);
+        } catch (error) {
+          console.error('Error saving PDF on mobile:', error);
+          toast({ 
+            title: 'Error', 
+            description: 'Failed to save PDF to device. Please check permissions.',
+            variant: 'destructive'
+          });
+        }
+      } else {
+        // For web, use normal download
+        pdf.save(fileName);
+        toast({ title: 'PDF Downloaded', description: `Question paper saved as ${fileName}` });
+      }
       
       // Save paper to localStorage
       const paperData = {
@@ -836,7 +894,6 @@ const StudentPortal = () => {
       savePaperToStorage(paperData);
       
       if (container.parentNode) container.parentNode.removeChild(container);
-      toast({ title: 'PDF Downloaded', description: `Question paper saved as ${fileName}` });
     };
 
     // Ensure html2canvas is available
@@ -891,7 +948,7 @@ const StudentPortal = () => {
         pdf.text(footerText, imgWidthPt / 2, footerY, { align: 'center' });
       }
 
-      saveAndCleanup(pdf);
+      await saveAndCleanup(pdf);
     } catch (e) {
       if (container.parentNode) container.parentNode.removeChild(container);
       console.error('PDF render failed', e);
@@ -968,6 +1025,18 @@ const StudentPortal = () => {
   // Normalize questions coming from various API shapes
   const normalizeQuestion = (raw: any): Question => {
     const questionText = getQuestionText(raw);
+    
+    // Parse options if it's a JSON string
+    let parsedOptions = raw?.options;
+    if (typeof parsedOptions === 'string') {
+      try {
+        parsedOptions = JSON.parse(parsedOptions);
+      } catch (e) {
+        console.error('Failed to parse options JSON:', parsedOptions);
+        parsedOptions = undefined;
+      }
+    }
+    
     const normalized: Question = {
       id: raw?.id ?? raw?._id ?? Number(`${Date.now()}${Math.floor(Math.random() * 1000)}`),
       question: questionText,
@@ -977,8 +1046,11 @@ const StudentPortal = () => {
       marks: Number(raw?.marks ?? raw?.score ?? raw?.points ?? 0),
       text: raw?.text,
       content: raw?.content,
-      options: Array.isArray(raw?.options)
-        ? raw.options
+      mediaUrl: raw?.mediaUrl ?? raw?.media_url ?? raw?.imageUrl ?? raw?.image_url ?? raw?.image,
+      imageUrl: raw?.imageUrl ?? raw?.image_url ?? raw?.mediaUrl ?? raw?.media_url ?? raw?.image,
+      image: raw?.image ?? raw?.imageUrl ?? raw?.image_url ?? raw?.mediaUrl ?? raw?.media_url,
+      options: Array.isArray(parsedOptions)
+        ? parsedOptions
         : Array.isArray(raw?.choices)
         ? raw.choices
         : Array.isArray(raw?.mcqOptions)
@@ -998,7 +1070,17 @@ const StudentPortal = () => {
   };
 
   const getQuestionOptions = (q: any): string[] => {
-    const opts = (q?.options as any) || q?.choices || q?.mcqOptions;
+    let opts = (q?.options as any) || q?.choices || q?.mcqOptions;
+    
+    // If options is a string, try to parse it as JSON
+    if (typeof opts === 'string') {
+      try {
+        opts = JSON.parse(opts);
+      } catch (e) {
+        console.error('Failed to parse options JSON:', opts);
+      }
+    }
+    
     if (Array.isArray(opts)) return opts.filter((o) => typeof o === 'string' && o.trim());
     const abcd = [q?.a, q?.b, q?.c, q?.d].filter((x: any) => typeof x === 'string' && x.trim());
     return abcd.length ? (abcd as string[]) : [];
@@ -5143,9 +5225,9 @@ const StudentPortal = () => {
               </Button>
             </CardHeader>
 
-            <CardContent className="flex flex-col h-[70vh] px-2 sm:px-6">
+            <CardContent className="px-2 sm:px-6 pb-6">
               {/* Editable header fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 flex-shrink-0">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
                   <Label htmlFor="examTitle">Exam Title</Label>
                   <Input id="examTitle" value={examTitle} onChange={(e) => setExamTitle(e.target.value)} placeholder="e.g., Mid-Term Examination" />
@@ -5176,8 +5258,8 @@ const StudentPortal = () => {
               </div>
 
               {selectedQuestions.length > 0 ? (
-                <div className="flex-1 flex flex-col min-h-0">
-                  <div className="bg-gray-50 p-4 rounded-lg mb-4 flex-shrink-0">
+                <div>
+                  <div className="bg-gray-50 p-4 rounded-lg mb-4">
                     <h3 className="font-semibold mb-2">Paper Summary</h3>
                     <p className="text-sm text-muted-foreground">
                       Total Questions: {selectedQuestions.length} | Total Marks: {selectedQuestions.reduce((sum, q) => sum + (q.marks || 0), 0)}
@@ -5185,7 +5267,7 @@ const StudentPortal = () => {
                   </div>
 
                   {/* Scrollable questions container */}
-                  <div className="flex-1 overflow-y-auto pr-2">
+                  <div className="max-h-[50vh] overflow-y-auto pr-2 mb-6">
                     <div className="space-y-6 pb-4">
                       {(() => {
                         // If user built custom sections/subsections, render them
@@ -5302,6 +5384,33 @@ const StudentPortal = () => {
                                         />
                                         <div className="mt-2 p-2 border rounded bg-muted/30">
                                           <Label className="text-[10px] sm:text-xs text-muted-foreground">Preview</Label>
+                                          {(() => {
+                                            // Check ALL possible image field names
+                                            const q: any = question;
+                                            const rawImageUrl = q.mediaUrl || q.imageUrl || q.image || q.media_url || q.image_url || 
+                                                           q.img || q.imgUrl || q.img_url || q.picture || q.photo || q.diagram;
+                                            const imageUrl = fixImageUrl(rawImageUrl);
+                                            console.log('Question ID:', question.id, 'Raw Image:', rawImageUrl, 'Fixed URL:', imageUrl);
+                                            
+                                            if (imageUrl) {
+                                              return (
+                                                <div className="mb-2">
+                                                  <img 
+                                                    src={imageUrl} 
+                                                    alt="Question diagram" 
+                                                    className="max-w-md h-auto rounded border"
+                                                    style={{ maxHeight: '300px', objectFit: 'contain' }}
+                                                    onError={(e) => {
+                                                      const target = e.target as HTMLImageElement;
+                                                      console.error('Image failed to load:', target.src);
+                                                    }}
+                                                    onLoad={() => console.log('Image loaded:', imageUrl)}
+                                                  />
+                                                </div>
+                                              );
+                                            }
+                                            return null;
+                                          })()}
                                           <div className="text-xs sm:text-sm">
                                             <LatexPreview content={question.question || (question as any).text || (question as any).content || ''} />
                                           </div>
@@ -5346,7 +5455,7 @@ const StudentPortal = () => {
                     </div>
                   </div>
 
-                  <div className="flex justify-center pt-6 gap-3 flex-shrink-0">
+                  <div className="flex justify-center gap-3 mt-4">
                   <Button onClick={generatePDF} className="bg-green-600 hover:bg-green-700">Download PDF</Button>
                   <Button onClick={() => generatePDFViaHTML(true)} className="bg-blue-600 hover:bg-blue-700">Download with Answers</Button>
                   </div>

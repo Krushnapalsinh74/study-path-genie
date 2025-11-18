@@ -779,9 +779,11 @@ const StudentPortal = () => {
     container.innerHTML = `
       <div style="padding:0;">
         <style>
-          .outer-frame{background:#ffffff;border:16px solid #000}
+          .outer-frame{background:#ffffff}
+          /* Nudge KaTeX fraction bar further down for better visual alignment in PDF */
+          .katex .mfrac .frac-line{transform:translateY(6px)}
           .paper-root{padding:26px 36px 36px 36px;font-family:'Times New Roman', Times, serif;color:#000;background:#ffffff}
-          .masthead{border:2px solid #000;border-radius:16px;padding:14px 16px;margin-bottom:14px}
+          .masthead{padding:14px 16px;margin-bottom:14px}
           .mast-title{text-align:center;line-height:1.35}
           .mast-title .line1{font-weight:700;font-size:18px}
           .mast-title .line2{font-weight:700;font-size:18px}
